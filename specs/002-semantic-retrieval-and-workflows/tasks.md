@@ -56,4 +56,4 @@
 - [x] Add live long-form smoke instructions for book and transcript ingestion.
 - [x] Run compile checks.
 - [x] Run pytest when installed.
-- [ ] Commit changes in logical chunks.
+- [x] Commit changes in logical chunks.
