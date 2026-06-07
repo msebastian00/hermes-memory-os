@@ -1,0 +1,8 @@
+memory:
+  provider: hermes-memory-os
+  entrypoint: hermes_memory_os.hermes_plugin:create_provider
+  config:
+    config_path: /home/mike/agents/agent-dev/hermes-memory-os/config/hermes-memory-os.example.yml
+
+environment:
+  HERMES_MEMORY_HOME: /tmp/hermes-memory-os-dev
