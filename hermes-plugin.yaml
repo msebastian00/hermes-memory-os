@@ -1,0 +1,13 @@
+name: hermes-memory-os
+type: memory_provider
+description: Local-first durable memory provider for Hermes.
+entrypoint: hermes_memory_os.hermes_plugin:create_provider
+provider_class: hermes_memory_os.provider:HermesMemoryOSProvider
+tools:
+  - hermes_memory_search
+  - hermes_memory_add
+  - hermes_memory_archive
+  - hermes_memory_feedback
+config:
+  requires:
+    - HERMES_MEMORY_HOME
