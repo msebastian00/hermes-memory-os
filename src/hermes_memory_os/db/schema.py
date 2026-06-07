@@ -67,9 +67,15 @@ CREATE TABLE IF NOT EXISTS source_chunks (
   page_end INTEGER,
   timestamp_start TEXT,
   timestamp_end TEXT,
+  speaker TEXT,
   text TEXT NOT NULL,
   summary TEXT,
   content_hash TEXT NOT NULL,
+  metadata_json TEXT,
+  chunking_version TEXT DEFAULT 'v1',
+  embedding_provider TEXT,
+  embedding_model TEXT,
+  indexing_state TEXT DEFAULT 'pending',
   qdrant_point_id TEXT,
   created_at TEXT NOT NULL,
   UNIQUE(source_id, chunk_index, content_hash)
@@ -111,6 +117,23 @@ CREATE TABLE IF NOT EXISTS agent_learning_events (
   summary TEXT NOT NULL,
   evidence_json TEXT,
   candidate_change TEXT,
+  status TEXT DEFAULT 'pending_review',
+  created_at TEXT NOT NULL,
+  reviewed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS extraction_candidates (
+  id TEXT PRIMARY KEY,
+  source_event_ids_json TEXT NOT NULL,
+  memory_type TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  title TEXT,
+  summary TEXT NOT NULL,
+  canonical_text TEXT NOT NULL,
+  entities_json TEXT,
+  tags_json TEXT,
+  confidence REAL DEFAULT 0.5,
+  reason_to_save TEXT,
   status TEXT DEFAULT 'pending_review',
   created_at TEXT NOT NULL,
   reviewed_at TEXT

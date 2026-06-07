@@ -39,6 +39,7 @@ class HermesMemoryOSProvider:
                         "query": {"type": "string"},
                         "scope": {"type": "string"},
                         "memory_type": {"type": "string"},
+                        "source_types": {"type": "array", "items": {"type": "string"}},
                         "limit": {"type": "integer", "default": 8},
                     },
                     "required": ["query"],
@@ -91,9 +92,15 @@ class HermesMemoryOSProvider:
     def handle_tool_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         app = self._require_app()
         if name == "hermes_memory_search":
-            return {"results": app.retriever.search(arguments["query"], limit=arguments.get("limit"))}
+            return {
+                "results": app.retriever.search(
+                    arguments["query"],
+                    limit=arguments.get("limit"),
+                    source_types=arguments.get("source_types"),
+                )
+            }
         if name == "hermes_memory_add":
-            memory_id = app.store.add_memory(
+            return app.add_memory(
                 memory_type=arguments["memory_type"],
                 scope=arguments["scope"],
                 title=arguments.get("title"),
@@ -102,7 +109,6 @@ class HermesMemoryOSProvider:
                 tags=arguments.get("tags"),
                 entities=arguments.get("entities"),
             )
-            return {"memory_id": memory_id}
         if name == "hermes_memory_archive":
             app.store.archive_memory(arguments["memory_id"], arguments.get("reason"))
             return {"archived": True}
@@ -123,14 +129,19 @@ class HermesMemoryOSProvider:
 
     def prefetch(self, query: str, context: dict[str, Any] | None = None) -> str:
         app = self._require_app()
-        results = app.retriever.search(query, context=context)
+        context = context or {}
+        results = app.retriever.search(
+            query,
+            context=context,
+            source_types=context.get("source_types"),
+        )
         if not results:
             return ""
         lines = ["## Relevant Local Memory"]
         memory_ids = []
         for item in results:
             memory_ids.append(item["id"])
-            source = _format_source(item.get("source"))
+            source = item.get("citation") or _format_source(item.get("source"))
             title = item.get("title") or item["id"]
             summary = item.get("summary") or item.get("text", "")[:240]
             lines.append(f"- {summary} Source: {source}.")

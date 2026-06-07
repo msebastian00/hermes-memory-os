@@ -22,6 +22,21 @@ class QdrantClient:
         except requests.RequestException:
             return False
 
+    def collection_exists(self, name: str) -> bool:
+        try:
+            response = requests.get(f"{self.url}/collections/{name}", timeout=self.timeout)
+            if response.status_code == 404:
+                return False
+            response.raise_for_status()
+            return True
+        except requests.RequestException:
+            return False
+
+    def collection_status(self, name: str) -> dict[str, Any]:
+        response = requests.get(f"{self.url}/collections/{name}", timeout=self.timeout)
+        response.raise_for_status()
+        return response.json().get("result", {})
+
     def ensure_collection(self, name: str, vector_size: int, distance: str = "Cosine") -> None:
         response = requests.put(
             f"{self.url}/collections/{name}",
@@ -38,10 +53,28 @@ class QdrantClient:
         )
         response.raise_for_status()
 
-    def search(self, collection: str, vector: list[float], limit: int = 8) -> list[dict[str, Any]]:
+    def upsert_points(self, collection: str, points: list[dict[str, Any]]) -> None:
+        response = requests.put(
+            f"{self.url}/collections/{collection}/points",
+            json={"points": points},
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+
+    def search(
+        self,
+        collection: str,
+        vector: list[float],
+        limit: int = 8,
+        *,
+        query_filter: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        body: dict[str, Any] = {"vector": vector, "limit": limit, "with_payload": True}
+        if query_filter:
+            body["filter"] = query_filter
         response = requests.post(
             f"{self.url}/collections/{collection}/points/search",
-            json={"vector": vector, "limit": limit, "with_payload": True},
+            json=body,
             timeout=self.timeout,
         )
         response.raise_for_status()

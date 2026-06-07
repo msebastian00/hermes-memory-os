@@ -12,6 +12,9 @@ class Embedder(Protocol):
     def embed(self, text: str) -> list[float]:
         """Return a vector embedding for text."""
 
+    def health(self) -> bool:
+        """Return whether the embedding provider is reachable."""
+
 
 class DisabledEmbedder:
     """Deterministic no-network embedder for local tests and keyword-only mode."""
@@ -26,6 +29,9 @@ class DisabledEmbedder:
             byte = digest[index % len(digest)]
             values.append((byte / 255.0) - 0.5)
         return values
+
+    def health(self) -> bool:
+        return True
 
 
 class OllamaEmbedder:
@@ -48,6 +54,13 @@ class OllamaEmbedder:
         if len(vector) != self.dimension:
             raise ValueError(f"Embedding dimension mismatch: expected {self.dimension}, got {len(vector)}")
         return vector
+
+    def health(self) -> bool:
+        try:
+            self.embed("health check")
+            return True
+        except (requests.RequestException, KeyError, ValueError):
+            return False
 
 
 def build_embedder(config: dict) -> Embedder:

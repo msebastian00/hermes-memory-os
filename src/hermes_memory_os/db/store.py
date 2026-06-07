@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from hermes_memory_os.db.connection import connect, initialize_schema
-from hermes_memory_os.utils import content_hash, dumps, new_id, now_iso
+from hermes_memory_os.utils import content_hash, dumps, loads, new_id, now_iso
 
 BLOCKED_RUNTIME_METADATA = {
     "speaker_confidence",
@@ -31,7 +31,12 @@ ALLOWED_PROVENANCE_METADATA = {
     "source_ref",
     "source",
     "tags",
+    "semantic_error",
+    "semantic_fallback",
+    "semantic_result_count",
 }
+
+DEFAULT_CHUNKING_VERSION = "v1"
 
 
 class MemoryStore:
@@ -162,6 +167,48 @@ class MemoryStore:
             )
         return memory_id
 
+    def get_memory(self, memory_id: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM memories WHERE id=?",
+                (memory_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "memory_type": row["memory_type"],
+            "scope": row["scope"],
+            "title": row["title"],
+            "summary": row["summary"],
+            "canonical_text": row["canonical_text"],
+            "source_event_ids": loads(row["source_event_ids"], []),
+            "source_paths": loads(row["source_paths"], []),
+            "entities": loads(row["entities_json"], []),
+            "tags": loads(row["tags_json"], []),
+            "confidence": row["confidence"],
+            "trust_score": row["trust_score"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "status": row["status"],
+            "qdrant_collection": row["qdrant_collection"],
+            "qdrant_point_id": row["qdrant_point_id"],
+        }
+
+    def get_memory_result(self, memory_id: str) -> dict[str, Any] | None:
+        memory = self.get_memory(memory_id)
+        if memory is None or memory["status"] != "active":
+            return None
+        return {
+            "id": memory["id"],
+            "kind": "memory",
+            "title": memory["title"],
+            "summary": memory["summary"],
+            "text": memory["canonical_text"],
+            "source": memory["source_paths"],
+            "trust_score": memory["trust_score"],
+        }
+
     def archive_memory(self, memory_id: str, reason: str | None = None) -> None:
         with self.connection() as conn:
             conn.execute(
@@ -177,6 +224,30 @@ class MemoryStore:
                     (new_id("fb"), memory_id, reason, now_iso()),
                 )
 
+    def save_memory_qdrant_point(
+        self,
+        memory_id: str,
+        *,
+        collection: str,
+        point_id: str,
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE memories
+                SET qdrant_collection=?, qdrant_point_id=?, updated_at=?
+                WHERE id=?
+                """,
+                (collection, point_id, now_iso(), memory_id),
+            )
+
+    def save_source_chunk_qdrant_point(self, chunk_id: str, point_id: str) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE source_chunks SET qdrant_point_id=? WHERE id=?",
+                (point_id, chunk_id),
+            )
+
     def upsert_source_file(
         self,
         *,
@@ -185,6 +256,8 @@ class MemoryStore:
         title: str,
         content: str,
         chunks: list[dict[str, Any]],
+        source_metadata: dict[str, Any] | None = None,
+        chunking_version: str = DEFAULT_CHUNKING_VERSION,
     ) -> tuple[str, bool]:
         file_hash = content_hash(content)
         with self.connection() as conn:
@@ -209,7 +282,7 @@ class MemoryStore:
                     source_type,
                     source_path,
                     now_iso(),
-                    dumps({}),
+                    dumps(source_metadata or {}),
                     file_hash,
                 ),
             )
@@ -220,16 +293,29 @@ class MemoryStore:
                 conn.execute(
                     """
                     INSERT INTO source_chunks (
-                      id, source_id, chunk_index, heading, text, content_hash, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                      id, source_id, chunk_index, heading, chapter, section,
+                      page_start, page_end, timestamp_start, timestamp_end, speaker,
+                      text, summary, content_hash, metadata_json, chunking_version,
+                      indexing_state, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
                     """,
                     (
                         chunk_id,
                         source_id,
                         index,
                         heading,
+                        chunk.get("chapter"),
+                        chunk.get("section"),
+                        chunk.get("page_start"),
+                        chunk.get("page_end"),
+                        chunk.get("timestamp_start"),
+                        chunk.get("timestamp_end"),
+                        chunk.get("speaker"),
                         text,
+                        chunk.get("summary"),
                         content_hash(text),
+                        dumps(chunk.get("metadata") or {}),
+                        chunk.get("chunking_version") or chunking_version,
                         now_iso(),
                     ),
                 )
@@ -239,62 +325,275 @@ class MemoryStore:
                 )
         return source_id, True
 
-    def search_keyword(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
+    def list_chunks_needing_index(
+        self,
+        *,
+        embedding_provider: str,
+        embedding_model: str,
+        chunking_version: str = DEFAULT_CHUNKING_VERSION,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT sc.*, s.title AS source_title, s.source_path, s.source_type
+                FROM source_chunks sc
+                JOIN sources s ON s.id = sc.source_id
+                WHERE s.status='active'
+                  AND (
+                    sc.qdrant_point_id IS NULL
+                    OR sc.indexing_state != 'indexed'
+                    OR sc.chunking_version != ?
+                    OR COALESCE(sc.embedding_provider, '') != ?
+                    OR COALESCE(sc.embedding_model, '') != ?
+                  )
+                ORDER BY sc.created_at
+                LIMIT ?
+                """,
+                (chunking_version, embedding_provider, embedding_model, limit),
+            ).fetchall()
+        return [_source_chunk_from_row(row) for row in rows]
+
+    def mark_source_chunk_indexed(
+        self,
+        chunk_id: str,
+        *,
+        qdrant_point_id: str,
+        embedding_provider: str,
+        embedding_model: str,
+        chunking_version: str = DEFAULT_CHUNKING_VERSION,
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE source_chunks
+                SET qdrant_point_id=?, embedding_provider=?, embedding_model=?,
+                    chunking_version=?, indexing_state='indexed'
+                WHERE id=?
+                """,
+                (qdrant_point_id, embedding_provider, embedding_model, chunking_version, chunk_id),
+            )
+
+    def mark_source_chunks_for_reindex(
+        self,
+        *,
+        source_id: str | None = None,
+        source_type: str | None = None,
+    ) -> int:
+        clauses = ["id IN (SELECT sc.id FROM source_chunks sc JOIN sources s ON s.id = sc.source_id WHERE 1=1"]
+        values: list[Any] = []
+        if source_id:
+            clauses.append("AND s.id=?")
+            values.append(source_id)
+        if source_type:
+            clauses.append("AND s.source_type=?")
+            values.append(source_type)
+        clauses.append(")")
+        with self.connection() as conn:
+            cursor = conn.execute(
+                f"""
+                UPDATE source_chunks
+                SET qdrant_point_id=NULL, embedding_provider=NULL, embedding_model=NULL,
+                    indexing_state='pending'
+                WHERE {' '.join(clauses)}
+                """,
+                values,
+            )
+            return cursor.rowcount
+
+    def get_source_chunk(self, chunk_id: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT sc.*, s.title AS source_title, s.source_path, s.source_type
+                FROM source_chunks sc
+                JOIN sources s ON s.id = sc.source_id
+                WHERE sc.id=? AND s.status='active'
+                """,
+                (chunk_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return _source_chunk_from_row(row)
+
+    def get_source_chunk_result(self, chunk_id: str) -> dict[str, Any] | None:
+        chunk = self.get_source_chunk(chunk_id)
+        if chunk is None:
+            return None
+        return source_chunk_result_from_chunk(chunk)
+
+    def create_extraction_candidate(
+        self,
+        *,
+        source_event_ids: list[str],
+        memory_type: str,
+        scope: str,
+        title: str | None,
+        summary: str,
+        canonical_text: str,
+        entities: list[str] | None = None,
+        tags: list[str] | None = None,
+        confidence: float = 0.5,
+        reason_to_save: str | None = None,
+    ) -> str:
+        candidate_id = new_id("cand")
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO extraction_candidates (
+                  id, source_event_ids_json, memory_type, scope, title, summary,
+                  canonical_text, entities_json, tags_json, confidence,
+                  reason_to_save, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?)
+                """,
+                (
+                    candidate_id,
+                    dumps(source_event_ids),
+                    memory_type,
+                    scope,
+                    title,
+                    summary,
+                    canonical_text,
+                    dumps(entities or []),
+                    dumps(tags or []),
+                    confidence,
+                    reason_to_save,
+                    now_iso(),
+                ),
+            )
+        return candidate_id
+
+    def list_extraction_candidates(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            if status:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM extraction_candidates
+                    WHERE status=?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM extraction_candidates
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        return [_candidate_from_row(row) for row in rows]
+
+    def update_extraction_candidate(
+        self,
+        candidate_id: str,
+        *,
+        status: str | None = None,
+        title: str | None = None,
+        summary: str | None = None,
+        canonical_text: str | None = None,
+        confidence: float | None = None,
+        reason_to_save: str | None = None,
+    ) -> None:
+        assignments: list[str] = []
+        values: list[Any] = []
+        for column, value in (
+            ("status", status),
+            ("title", title),
+            ("summary", summary),
+            ("canonical_text", canonical_text),
+            ("confidence", confidence),
+            ("reason_to_save", reason_to_save),
+        ):
+            if value is not None:
+                assignments.append(f"{column}=?")
+                values.append(value)
+
+        if status and status != "pending_review":
+            assignments.append("reviewed_at=?")
+            values.append(now_iso())
+
+        if not assignments:
+            return
+
+        values.append(candidate_id)
+        with self.connection() as conn:
+            conn.execute(
+                f"UPDATE extraction_candidates SET {', '.join(assignments)} WHERE id=?",
+                values,
+            )
+
+    def search_keyword(
+        self,
+        query: str,
+        limit: int = 8,
+        *,
+        source_types: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         started = time.perf_counter()
         results: list[dict[str, Any]] = []
         with self.connection() as conn:
-            memory_rows = conn.execute(
-                """
-                SELECT m.*, bm25(memories_fts) AS rank
-                FROM memories_fts
-                JOIN memories m ON m.id = memories_fts.memory_id
-                WHERE memories_fts MATCH ? AND m.status='active'
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (query, limit),
-            ).fetchall()
-            for row in memory_rows:
-                results.append(
-                    {
-                        "id": row["id"],
-                        "kind": "memory",
-                        "title": row["title"],
-                        "summary": row["summary"],
-                        "text": row["canonical_text"],
-                        "source": row["source_paths"],
-                        "keyword_score": _rank_to_score(row["rank"]),
-                        "trust_score": row["trust_score"],
-                    }
-                )
+            if not source_types:
+                memory_rows = conn.execute(
+                    """
+                    SELECT m.*, bm25(memories_fts) AS rank
+                    FROM memories_fts
+                    JOIN memories m ON m.id = memories_fts.memory_id
+                    WHERE memories_fts MATCH ? AND m.status='active'
+                    ORDER BY rank
+                    LIMIT ?
+                    """,
+                    (query, limit),
+                ).fetchall()
+                for row in memory_rows:
+                    results.append(
+                        {
+                            "id": row["id"],
+                            "kind": "memory",
+                            "title": row["title"],
+                            "summary": row["summary"],
+                            "text": row["canonical_text"],
+                            "source": row["source_paths"],
+                            "keyword_score": _rank_to_score(row["rank"]),
+                            "trust_score": row["trust_score"],
+                        }
+                    )
 
             remaining = max(limit - len(results), 0)
             if remaining:
+                source_filter_sql = ""
+                params: list[Any] = [query]
+                if source_types:
+                    placeholders = ", ".join("?" for _ in source_types)
+                    source_filter_sql = f" AND s.source_type IN ({placeholders})"
+                    params.extend(source_types)
+                params.append(remaining)
                 chunk_rows = conn.execute(
-                    """
-                    SELECT sc.*, s.title AS source_title, s.source_path, bm25(source_chunks_fts) AS rank
+                    f"""
+                    SELECT sc.*, s.title AS source_title, s.source_path, s.source_type,
+                           bm25(source_chunks_fts) AS rank
                     FROM source_chunks_fts
                     JOIN source_chunks sc ON sc.id = source_chunks_fts.chunk_id
                     JOIN sources s ON s.id = sc.source_id
                     WHERE source_chunks_fts MATCH ? AND s.status='active'
+                    {source_filter_sql}
                     ORDER BY rank
                     LIMIT ?
                     """,
-                    (query, remaining),
+                    params,
                 ).fetchall()
                 for row in chunk_rows:
-                    results.append(
-                        {
-                            "id": row["id"],
-                            "kind": "source_chunk",
-                            "title": row["heading"] or row["source_title"],
-                            "summary": row["text"][:240],
-                            "text": row["text"],
-                            "source": row["source_path"],
-                            "keyword_score": _rank_to_score(row["rank"]),
-                            "trust_score": 0.5,
-                        }
-                    )
+                    chunk = _source_chunk_from_row(row)
+                    result = source_chunk_result_from_chunk(chunk)
+                    result["keyword_score"] = _rank_to_score(row["rank"])
+                    results.append(result)
 
         latency_ms = int((time.perf_counter() - started) * 1000)
         self.log_retrieval(query, results, latency_ms, suppressed=False)
@@ -388,3 +687,99 @@ def sanitize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 def _rank_to_score(rank: float) -> float:
     # SQLite bm25 is lower-is-better and often negative. This maps it to a compact positive score.
     return max(0.0, min(1.0, 1.0 / (1.0 + abs(rank))))
+
+
+def _source_chunk_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    chunk = {
+        "id": row["id"],
+        "source_id": row["source_id"],
+        "source_title": row["source_title"],
+        "source_path": row["source_path"],
+        "source_type": row["source_type"],
+        "chunk_index": row["chunk_index"],
+        "heading": row["heading"],
+        "chapter": row["chapter"],
+        "section": row["section"],
+        "page_start": row["page_start"],
+        "page_end": row["page_end"],
+        "timestamp_start": row["timestamp_start"],
+        "timestamp_end": row["timestamp_end"],
+        "speaker": row["speaker"],
+        "text": row["text"],
+        "summary": row["summary"],
+        "content_hash": row["content_hash"],
+        "metadata": loads(row["metadata_json"], {}),
+        "chunking_version": row["chunking_version"],
+        "embedding_provider": row["embedding_provider"],
+        "embedding_model": row["embedding_model"],
+        "indexing_state": row["indexing_state"],
+        "qdrant_point_id": row["qdrant_point_id"],
+    }
+    chunk["citation"] = format_source_citation(chunk)
+    return chunk
+
+
+def format_source_citation(chunk: dict[str, Any]) -> str:
+    title = chunk.get("source_title") or Path(str(chunk.get("source_path"))).stem
+    markers = []
+    if chunk.get("chapter"):
+        markers.append(str(chunk["chapter"]))
+    if chunk.get("section") and chunk.get("section") != chunk.get("chapter"):
+        markers.append(str(chunk["section"]))
+    if chunk.get("page_start") is not None:
+        page = f"p. {chunk['page_start']}"
+        if chunk.get("page_end") and chunk["page_end"] != chunk["page_start"]:
+            page = f"{page}-{chunk['page_end']}"
+        markers.append(page)
+    if chunk.get("timestamp_start"):
+        timestamp = str(chunk["timestamp_start"])
+        if chunk.get("timestamp_end"):
+            timestamp = f"{timestamp}-{chunk['timestamp_end']}"
+        markers.append(timestamp)
+    if chunk.get("heading") and chunk.get("heading") not in markers:
+        markers.append(str(chunk["heading"]))
+    location = ", ".join(markers)
+    if location:
+        return f"{title} ({location})"
+    return str(title)
+
+
+def source_chunk_result_from_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": chunk["id"],
+        "kind": "source_chunk",
+        "title": chunk.get("heading") or chunk.get("source_title"),
+        "summary": chunk["text"][:240],
+        "text": chunk["text"],
+        "source": chunk["source_path"],
+        "source_type": chunk["source_type"],
+        "citation": chunk["citation"],
+        "metadata": chunk["metadata"],
+        "chapter": chunk["chapter"],
+        "section": chunk["section"],
+        "page_start": chunk["page_start"],
+        "page_end": chunk["page_end"],
+        "timestamp_start": chunk["timestamp_start"],
+        "timestamp_end": chunk["timestamp_end"],
+        "speaker": chunk["speaker"],
+        "trust_score": 0.5,
+    }
+
+
+def _candidate_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "source_event_ids": loads(row["source_event_ids_json"], []),
+        "memory_type": row["memory_type"],
+        "scope": row["scope"],
+        "title": row["title"],
+        "summary": row["summary"],
+        "canonical_text": row["canonical_text"],
+        "entities": loads(row["entities_json"], []),
+        "tags": loads(row["tags_json"], []),
+        "confidence": row["confidence"],
+        "reason_to_save": row["reason_to_save"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "reviewed_at": row["reviewed_at"],
+    }
