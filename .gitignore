@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+.git-meta/
+
+# Local memory runtime data
+.memory-data/
+memory.sqlite
+*.sqlite
+*.sqlite3
+*.db
+logs/
+vault/
+qdrant_storage/
+
+# Machine-local configuration and secrets
+.env
+*.local.yml
+*.local.yaml
+config/*.local.yml
+config/*.local.yaml
