@@ -42,6 +42,32 @@ hermes_memory_os.provider:HermesMemoryOSProvider
 
 The root `hermes-plugin.yaml` records these paths for plugin loaders that use manifests. This does not make Hermes the owner of the project; it only exposes a stable integration point.
 
+## Provider Behavior
+
+The provider exposes local durable memory through tool calls and prefetch:
+
+- `hermes_memory_add` writes a durable memory and semantically indexes it when local semantic services are enabled.
+- `hermes_memory_search` returns hybrid FTS/Qdrant results with source labels and citations.
+- `prefetch` injects source-labeled local memory context for Hermes turns.
+- `sync_turn` persists raw provenance events after dropping blocked runtime metadata.
+
+Use `python -m hermes_memory_os.cli provider-smoke` from a Hermes workspace to verify import paths, memory add, prefetch, and turn sync.
+
+## Source Ingestion
+
+Long-form source ingestion is available through the CLI:
+
+```bash
+python -m hermes_memory_os.cli ingest --path /path/to/wiki-or-source-dir
+python -m hermes_memory_os.cli ingest --path /path/to/book.txt --source-type book
+python -m hermes_memory_os.cli ingest --path /path/to/transcript.srt
+python -m hermes_memory_os.cli search "relevant concept" --source-type book
+```
+
+When Qdrant and Ollama are enabled, ingested source chunks are embedded into the configured source collection. Without semantic services, the same sources remain searchable through SQLite FTS.
+
+Live Qdrant/Ollama and long-form smoke steps are documented in [live-smoke.md](live-smoke.md).
+
 ## Runtime Data
 
 Do not store runtime memory data in the Hermes repo or in this repo. Set `HERMES_MEMORY_HOME` per machine:

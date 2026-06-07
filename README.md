@@ -4,15 +4,17 @@ Local-first durable memory substrate for Hermes, with a clean client boundary fo
 
 ## Current Status
 
-This repository contains the first implementation slice:
+This repository contains the local memory substrate and current semantic retrieval milestone:
 
 - config-required storage using `HERMES_MEMORY_HOME` or `--data-dir`
 - SQLite schema and local store
-- optional Qdrant collection setup and vector search
-- Markdown/wiki-brain ingestion with idempotent content hashes
-- CLI commands for `init`, `doctor`, `ingest`, `search`, `add`, and `archive`
-- Hermes provider adapter skeleton with `prefetch` and `sync_turn`
-- reviewed self-learning event logging
+- optional Qdrant collection setup, semantic indexing, and hybrid vector/FTS search
+- Markdown/wiki-brain and long-form source ingestion with idempotent content hashes
+- `.txt`, `.epub`, `.srt`, `.vtt`, `.json`, and dependency-gated `.pdf` ingestion
+- source-type filters, citations, and re-index state for books, transcripts, wiki notes, articles, and subtitles
+- CLI commands for `init`, `doctor`, `ingest`, `search`, `add`, `archive`, `candidates`, and `provider-smoke`
+- Hermes provider adapter with `prefetch`, `sync_turn`, and source-labeled retrieval
+- reviewed extraction candidates and self-learning event logging
 
 ## Quick Start
 
@@ -25,6 +27,81 @@ python -m hermes_memory_os.cli search "Reachy memory bridge"
 ```
 
 Storage paths are intentionally not hardcoded. Use a different `HERMES_MEMORY_HOME` on WSL2, DGX Spark, or any other host.
+
+## Semantic Setup
+
+Semantic retrieval is local-first and optional. The default config uses `embeddings.provider: none`, so keyword/FTS retrieval works without Qdrant or Ollama.
+
+To enable local semantic indexing with Qdrant and Ollama:
+
+```yaml
+qdrant:
+  enabled: true
+  url: http://localhost:6333
+  vector_size: 768
+  distance: Cosine
+
+embeddings:
+  provider: ollama
+  base_url: http://localhost:11434
+  model: nomic-embed-text
+  dimension: 768
+```
+
+Then run:
+
+```bash
+python -m hermes_memory_os.cli init
+python -m hermes_memory_os.cli doctor
+python -m hermes_memory_os.cli ingest --path /path/to/wiki-brain
+python -m hermes_memory_os.cli search "conceptually related wording"
+```
+
+When semantic services are enabled, `ingest` embeds source chunks into Qdrant and `add` embeds durable memories. `search` merges Qdrant semantic results with SQLite FTS results and falls back to FTS if Qdrant or embeddings fail.
+
+## Long-Form Ingestion
+
+`ingest` accepts files or directories. Supported source formats:
+
+- `.md` wiki/Markdown notes
+- `.txt` books, articles, and plain transcripts
+- `.epub` books via local ZIP/XHTML extraction
+- `.srt` and `.vtt` subtitles/transcripts with timestamp and speaker metadata
+- `.json` transcript exports with speaker/timestamp metadata when present
+- `.pdf` when the local `pypdf` dependency is installed
+
+Examples:
+
+```bash
+python -m hermes_memory_os.cli ingest --path /path/to/book.txt --source-type book
+python -m hermes_memory_os.cli ingest --path /path/to/transcript.srt
+python -m hermes_memory_os.cli search "organizational memory" --source-type book
+python -m hermes_memory_os.cli search "what did Mike say about memory" --source-type subtitle
+```
+
+Use `--reindex` to mark unchanged sources for re-indexing when the chunking version, embedding provider, or embedding model changes:
+
+```bash
+python -m hermes_memory_os.cli ingest --path /path/to/sources --reindex
+```
+
+Retrieved source chunks include citations using the best available location marker: heading, chapter, section, page, timestamp, or speaker metadata.
+
+## Candidate Review
+
+Extraction candidates are staged for review and are not promoted into durable memories automatically.
+
+```bash
+python -m hermes_memory_os.cli candidates create \
+  --source-event-id evt_123 \
+  --type fact \
+  --scope system \
+  --summary "Hermes should preserve reviewed candidates." \
+  --text "Hermes should preserve reviewed candidates before durable promotion."
+
+python -m hermes_memory_os.cli candidates list --status pending_review
+python -m hermes_memory_os.cli candidates update cand_123 --status approved
+```
 
 ## Development Modes
 
@@ -48,6 +125,6 @@ Hermes should import the provider through `hermes_memory_os.hermes_plugin:create
 
 ## Design Boundary
 
-Hermes Memory OS owns durable memory: SQLite, Qdrant, raw events, durable memories, source metadata, retrieval logs, injection logs, feedback, and reviewed self-learning events.
+Hermes Memory OS owns durable memory: SQLite, Qdrant, raw events, durable memories, source/chunk metadata, retrieval logs, injection logs, feedback, extraction candidates, and reviewed self-learning events.
 
 Reachy owns embodied working memory locally: wake/listening state, speaker confidence, body/camera context, room awareness, latency budgets, and short-lived conversational state. Reachy calls Hermes memory through the provider/API boundary and does not write directly to SQLite or Qdrant.
