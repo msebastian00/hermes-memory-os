@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .app import MemoryApp
+from .chief import daily_brief, process_inbox, self_review, weekly_connections
 from .config import ConfigError
 from .provider import create_provider
 
@@ -70,6 +71,26 @@ def main(argv: list[str] | None = None) -> int:
     candidate_update.add_argument("--text", dest="canonical_text")
     candidate_update.add_argument("--confidence", type=float)
     candidate_update.add_argument("--reason")
+
+    chief = sub.add_parser("chief", help="Generate Chief of Staff workflow drafts.")
+    chief_sub = chief.add_subparsers(dest="chief_command", required=True)
+
+    process = chief_sub.add_parser("process-inbox", help="Generate an inbox processing draft.")
+    process.add_argument("--path", action="append", required=True, help="Inbox file or directory. May be repeated.")
+    process.add_argument("--output-dir")
+    process.add_argument("--limit", type=int, default=8)
+
+    daily = chief_sub.add_parser("daily-brief", help="Generate a daily brief draft.")
+    daily.add_argument("--output-dir")
+    daily.add_argument("--limit", type=int, default=8)
+
+    weekly = chief_sub.add_parser("weekly-connections", help="Generate a weekly connections draft.")
+    weekly.add_argument("--output-dir")
+    weekly.add_argument("--limit", type=int, default=12)
+
+    review = chief_sub.add_parser("self-review", help="Generate a self-review draft.")
+    review.add_argument("--output-dir")
+    review.add_argument("--limit", type=int, default=20)
 
     smoke = sub.add_parser("provider-smoke", help="Verify the Hermes provider entrypoint works.")
     smoke.add_argument("--query", default="Hermes Memory OS provider smoke")
@@ -164,6 +185,26 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 print_json({"updated": True, "candidate_id": args.candidate_id})
                 return 0
+
+        if args.command == "chief":
+            output_dir = Path(args.output_dir) if args.output_dir else None
+            if args.chief_command == "process-inbox":
+                output = process_inbox(
+                    app,
+                    paths=[Path(path) for path in args.path],
+                    output_dir=output_dir,
+                    limit=args.limit,
+                )
+            elif args.chief_command == "daily-brief":
+                output = daily_brief(app, output_dir=output_dir, limit=args.limit)
+            elif args.chief_command == "weekly-connections":
+                output = weekly_connections(app, output_dir=output_dir, limit=args.limit)
+            elif args.chief_command == "self-review":
+                output = self_review(app, output_dir=output_dir, limit=args.limit)
+            else:
+                raise ConfigError(f"Unknown chief command: {args.chief_command}")
+            print_json({"output_path": str(output)})
+            return 0
 
         if args.command == "provider-smoke":
             provider = create_provider({"config_path": args.config, "data_dir": args.data_dir})

@@ -33,9 +33,11 @@ Extraction candidates are stored in `extraction_candidates` and default to `pend
 
 ## Chief Of Staff
 
-Chief of Staff is a future workflow layer over Hermes Memory OS and wiki-brain. It is not a separate memory backend and is deferred to the following implementation slice.
+Chief of Staff is a workflow layer over Hermes Memory OS and wiki-brain. It is not a separate memory backend.
 
-Future workflow commands should read from durable memory and indexed wiki-brain content, then write generated Markdown outputs such as inbox processing notes, daily briefs, weekly connections, deep research notes, and self-learning review summaries.
+The current commands read from durable memory, indexed source content, raw events, extraction candidates, and learning events. They write generated Markdown drafts such as inbox processing notes, daily briefs, weekly connections, and self-learning review summaries.
+
+Chief of Staff commands are deterministic local draft generators. They do not call an LLM, promote extraction candidates, modify prompts, or write durable memory automatically.
 
 Readwise, N8N, Telegram, and Vellum-style orchestration should be optional adapters that call the same memory APIs or CLI commands.
 

@@ -103,6 +103,19 @@ python -m hermes_memory_os.cli candidates list --status pending_review
 python -m hermes_memory_os.cli candidates update cand_123 --status approved
 ```
 
+## Chief Of Staff Drafts
+
+Chief of Staff workflows are local deterministic draft generators over existing memory, source retrieval, candidates, and learning events. They write Markdown under `vault/chief/` by default and do not promote candidates or modify durable memory automatically.
+
+```bash
+python -m hermes_memory_os.cli chief process-inbox --path /path/to/inbox
+python -m hermes_memory_os.cli chief daily-brief
+python -m hermes_memory_os.cli chief weekly-connections
+python -m hermes_memory_os.cli chief self-review
+```
+
+Use `--output-dir` on any Chief command to write drafts somewhere else.
+
 ## Development Modes
 
 Direct/Codex development from this repo:

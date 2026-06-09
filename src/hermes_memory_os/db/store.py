@@ -209,6 +209,41 @@ class MemoryStore:
             "trust_score": memory["trust_score"],
         }
 
+    def list_memories(
+        self,
+        *,
+        status: str = "active",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM memories
+                WHERE status=?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (status, limit),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "memory_type": row["memory_type"],
+                "scope": row["scope"],
+                "title": row["title"],
+                "summary": row["summary"],
+                "canonical_text": row["canonical_text"],
+                "entities": loads(row["entities_json"], []),
+                "tags": loads(row["tags_json"], []),
+                "confidence": row["confidence"],
+                "trust_score": row["trust_score"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "status": row["status"],
+            }
+            for row in rows
+        ]
+
     def archive_memory(self, memory_id: str, reason: str | None = None) -> None:
         with self.connection() as conn:
             conn.execute(
@@ -670,6 +705,75 @@ class MemoryStore:
                 (event_id, event_type, summary, dumps(evidence or {}), candidate_change, now_iso()),
             )
         return event_id
+
+    def list_recent_raw_events(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, source, client, conversation_id, source_ref, role,
+                       content, created_at, metadata_json, status
+                FROM raw_events
+                WHERE status='active'
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "source": row["source"],
+                "client": row["client"],
+                "conversation_id": row["conversation_id"],
+                "source_ref": row["source_ref"],
+                "role": row["role"],
+                "content": row["content"],
+                "created_at": row["created_at"],
+                "metadata": loads(row["metadata_json"], {}),
+                "status": row["status"],
+            }
+            for row in rows
+        ]
+
+    def list_agent_learning_events(
+        self,
+        *,
+        status: str | None = "pending_review",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            if status:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM agent_learning_events
+                    WHERE status=?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (status, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM agent_learning_events
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "event_type": row["event_type"],
+                "summary": row["summary"],
+                "evidence": loads(row["evidence_json"], {}),
+                "candidate_change": row["candidate_change"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+                "reviewed_at": row["reviewed_at"],
+            }
+            for row in rows
+        ]
 
 
 def sanitize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:

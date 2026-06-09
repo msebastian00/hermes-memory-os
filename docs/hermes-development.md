@@ -68,6 +68,19 @@ When Qdrant and Ollama are enabled, ingested source chunks are embedded into the
 
 Live Qdrant/Ollama and long-form smoke steps are documented in [live-smoke.md](live-smoke.md).
 
+## Chief Of Staff Drafts
+
+Chief of Staff commands generate local Markdown drafts without autonomous memory writes:
+
+```bash
+python -m hermes_memory_os.cli chief process-inbox --path /path/to/inbox
+python -m hermes_memory_os.cli chief daily-brief
+python -m hermes_memory_os.cli chief weekly-connections
+python -m hermes_memory_os.cli chief self-review
+```
+
+Hermes can treat these drafts as review artifacts. If a draft identifies a durable fact or preference, route it through extraction candidate review before writing memory.
+
 ## Runtime Data
 
 Do not store runtime memory data in the Hermes repo or in this repo. Set `HERMES_MEMORY_HOME` per machine:
