@@ -1,6 +1,8 @@
 from pathlib import Path
+import json
 
 from hermes_memory_os.app import MemoryApp
+from hermes_memory_os.cli import main
 
 
 class FakeEmbedder:
@@ -40,6 +42,23 @@ class FakeQdrant:
                 "payload": payload,
             }
         )
+
+
+def _write_storage_config(path: Path, data_dir: Path) -> None:
+    path.write_text(
+        f"""
+paths:
+  base_dir: {data_dir}
+  vault_dir: {data_dir / "vault"}
+  sqlite_path: {data_dir / "db" / "memory.sqlite"}
+  logs_dir: {data_dir / "logs"}
+qdrant:
+  enabled: false
+embeddings:
+  provider: none
+""",
+        encoding="utf-8",
+    )
 
 
 def _write_semantic_config(path: Path, data_dir: Path) -> None:
@@ -150,3 +169,43 @@ def test_app_add_semantically_indexes_durable_memory(tmp_path, monkeypatch):
         ).fetchone()
     assert row["qdrant_collection"] == "hermes_memories"
     assert row["qdrant_point_id"] == FakeQdrant.upserts[0]["point_id"]
+
+
+def test_reindex_memories_backfills_existing_durable_memories(tmp_path, monkeypatch, capsys):
+    FakeQdrant.upserts = []
+    FakeQdrant.ensured = []
+    monkeypatch.setattr("hermes_memory_os.app.QdrantClient", FakeQdrant)
+    monkeypatch.setattr("hermes_memory_os.app.build_embedder", lambda config: FakeEmbedder())
+    storage_config = tmp_path / "storage.yml"
+    semantic_config = tmp_path / "semantic.yml"
+    data_dir = tmp_path / "data"
+    _write_storage_config(storage_config, data_dir)
+    _write_semantic_config(semantic_config, data_dir)
+
+    storage_app = MemoryApp.from_config(config_path=storage_config)
+    storage_app.init_storage()
+    storage_app.add_memory(
+        memory_type="fact",
+        scope="system",
+        title="Backfill one",
+        summary="First memory to backfill.",
+        canonical_text="First memory to backfill.",
+    )
+    storage_app.add_memory(
+        memory_type="fact",
+        scope="system",
+        title="Backfill two",
+        summary="Second memory to backfill.",
+        canonical_text="Second memory to backfill.",
+    )
+
+    assert main(["--config", str(semantic_config), "reindex-memories"]) == 0
+    result = capsys.readouterr()
+    status = json.loads(result.out)
+
+    assert status["semantic_enabled"] is True
+    assert status["memories_reindexed"] == 2
+    assert status["semantic_indexed"] == 2
+    assert status["semantic_failed"] == 0
+    assert len(FakeQdrant.upserts) == 2
+    assert {item["collection"] for item in FakeQdrant.upserts} == {"hermes_memories"}

@@ -92,6 +92,9 @@ def main(argv: list[str] | None = None) -> int:
     review.add_argument("--output-dir")
     review.add_argument("--limit", type=int, default=20)
 
+    reindex_memories = sub.add_parser("reindex-memories", help="Reindex all active durable memories into Qdrant.")
+    reindex_memories.add_argument("--batch-size", type=int, default=200)
+
     smoke = sub.add_parser("provider-smoke", help="Verify the Hermes provider entrypoint works.")
     smoke.add_argument("--query", default="Hermes Memory OS provider smoke")
 
@@ -127,6 +130,10 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 }
             )
+            return 0
+
+        if args.command == "reindex-memories":
+            print_json(app.reindex_memories(batch_size=args.batch_size))
             return 0
 
         if args.command == "add":

@@ -147,6 +147,39 @@ class MemoryApp:
             result.update(self.semantic_indexer.index_memory(memory_id))
         return result
 
+    def reindex_memories(self, *, batch_size: int = 200) -> dict[str, int | bool]:
+        if self.semantic_indexer is None:
+            return {
+                "semantic_enabled": False,
+                "memories_reindexed": 0,
+                "semantic_indexed": 0,
+                "semantic_failed": 0,
+            }
+
+        memories_reindexed = 0
+        semantic_indexed = 0
+        semantic_failed = 0
+        offset = 0
+        while True:
+            memory_ids = self.store.list_memory_ids(status="active", limit=batch_size, offset=offset)
+            if not memory_ids:
+                break
+            memories_reindexed += len(memory_ids)
+            for memory_id in memory_ids:
+                result = self.semantic_indexer.index_memory(memory_id)
+                semantic_indexed += int(result.get("semantic_indexed", 0))
+                semantic_failed += int(result.get("semantic_failed", 0))
+            if len(memory_ids) < batch_size:
+                break
+            offset += batch_size
+
+        return {
+            "semantic_enabled": True,
+            "memories_reindexed": memories_reindexed,
+            "semantic_indexed": semantic_indexed,
+            "semantic_failed": semantic_failed,
+        }
+
     def _init_qdrant_if_enabled(self) -> None:
         qdrant = self.config.qdrant
         if qdrant.get("enabled") is not True:

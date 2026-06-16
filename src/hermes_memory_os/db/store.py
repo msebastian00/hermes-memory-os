@@ -214,6 +214,7 @@ class MemoryStore:
         *,
         status: str = "active",
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         with self.connection() as conn:
             rows = conn.execute(
@@ -221,9 +222,9 @@ class MemoryStore:
                 SELECT * FROM memories
                 WHERE status=?
                 ORDER BY updated_at DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (status, limit),
+                (status, limit, offset),
             ).fetchall()
         return [
             {
@@ -243,6 +244,26 @@ class MemoryStore:
             }
             for row in rows
         ]
+
+    def list_memory_ids(
+        self,
+        *,
+        status: str = "active",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[str]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id
+                FROM memories
+                WHERE status=?
+                ORDER BY created_at ASC, id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (status, limit, offset),
+            ).fetchall()
+        return [row["id"] for row in rows]
 
     def archive_memory(self, memory_id: str, reason: str | None = None) -> None:
         with self.connection() as conn:

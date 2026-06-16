@@ -16,6 +16,8 @@ docker run --rm -p 6333:6333 qdrant/qdrant
 ollama pull nomic-embed-text
 ```
 
+For the Spark production deployment, use `config/hermes-memory-os.prod.yml` and the matching Hermes config reference at `config/hermes-agent-prod.example.yml`.
+
 ## Semantic Config
 
 Create a local config file outside committed runtime data, for example `/tmp/hermes-memory-semantic.yml`:
@@ -140,3 +142,17 @@ Expected:
 - Unchanged sources are skipped for SQLite duplication.
 - Existing chunks are marked for semantic refresh.
 - Qdrant points are refreshed without creating duplicate SQLite source records.
+
+### Durable Memory Backfill
+
+Use the new bulk memory reindex command after enabling semantic mode for existing durable memories:
+
+```bash
+python -m hermes_memory_os.cli --config /tmp/hermes-memory-semantic.yml reindex-memories
+```
+
+Expected:
+
+- Active durable memories are re-embedded into `hermes_memories`.
+- The command reports `semantic_enabled: true`.
+- The command reports non-zero `memories_reindexed` when memories exist.
