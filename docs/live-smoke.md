@@ -18,6 +18,14 @@ ollama pull nomic-embed-text
 
 For the Spark production deployment, use `config/hermes-memory-os.prod.yml` and the matching Hermes config reference at `config/hermes-agent-prod.example.yml`.
 
+Run the full Spark bring-up and smoke gate with:
+
+```bash
+scripts/spark-smoke.sh
+```
+
+The script accepts `HERMES_CONFIG_PATH`, `HERMES_MEMORY_HOME`, `PYTHON_BIN`, and `HERMES_SKIP_OLLAMA_PULL=1` overrides. It exits non-zero if strict doctor, semantic search, source ingest/search, or provider smoke fails.
+
 ## Semantic Config
 
 Create a local config file outside committed runtime data, for example `/tmp/hermes-memory-semantic.yml`:

@@ -1,6 +1,6 @@
 import json
 
-from hermes_memory_os.cli import main
+from hermes_memory_os.cli import doctor_strict_failures, main
 
 
 def test_candidates_cli_create_list_and_update(tmp_path, capsys):
@@ -103,3 +103,45 @@ qdrant:
     assert status["semantic_enabled"] is False
     assert status["qdrant_enabled"] is False
     assert status["wiki_path_status"] == [{"path": str(wiki), "exists": False}]
+
+
+def test_doctor_strict_failures_require_semantic_services():
+    failures = doctor_strict_failures(
+        {
+            "base_dir_exists": True,
+            "vault_dir_exists": True,
+            "sqlite_exists": True,
+            "logs_dir_exists": True,
+            "cloud_allowed": False,
+            "embedding_provider": "none",
+            "semantic_enabled": False,
+            "qdrant_enabled": False,
+        }
+    )
+
+    assert "semantic_disabled" in failures
+    assert "embedding_provider_none" in failures
+    assert "qdrant_disabled" in failures
+
+
+def test_doctor_strict_failures_pass_when_all_services_are_ready():
+    failures = doctor_strict_failures(
+        {
+            "base_dir_exists": True,
+            "vault_dir_exists": True,
+            "sqlite_exists": True,
+            "logs_dir_exists": True,
+            "cloud_allowed": False,
+            "embedding_provider": "ollama",
+            "embedding_reachable": True,
+            "semantic_enabled": True,
+            "qdrant_enabled": True,
+            "qdrant_reachable": True,
+            "qdrant_collections": {
+                "memories": {"exists": True},
+                "sources": {"exists": True},
+            },
+        }
+    )
+
+    assert failures == []

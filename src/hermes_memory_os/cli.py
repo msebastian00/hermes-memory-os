@@ -20,7 +20,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init", help="Initialize local storage.")
-    sub.add_parser("doctor", help="Validate local storage and config.")
+    doctor = sub.add_parser("doctor", help="Validate local storage and config.")
+    doctor.add_argument("--strict", action="store_true", help="Exit non-zero unless semantic production readiness checks pass.")
 
     ingest = sub.add_parser("ingest", help="Ingest local source content.")
     ingest.add_argument("--path", action="append", help="Source file or directory. May be repeated.")
@@ -108,7 +109,14 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "doctor":
             app.store.init()
-            print_json(app.doctor())
+            status = app.doctor()
+            if args.strict:
+                failures = doctor_strict_failures(status)
+                status["strict_ready"] = not failures
+                status["strict_failures"] = failures
+                print_json(status)
+                return 0 if not failures else 1
+            print_json(status)
             return 0
 
         app.init_storage()
@@ -252,6 +260,41 @@ def main(argv: list[str] | None = None) -> int:
 
 def print_json(value: object) -> None:
     print(json.dumps(value, indent=2, sort_keys=True))
+
+
+def doctor_strict_failures(status: dict[str, object]) -> list[str]:
+    failures = []
+    required_true = {
+        "base_dir_exists": "base_dir_missing",
+        "vault_dir_exists": "vault_dir_missing",
+        "sqlite_exists": "sqlite_missing",
+        "logs_dir_exists": "logs_dir_missing",
+        "semantic_enabled": "semantic_disabled",
+        "embedding_reachable": "embedding_unreachable",
+        "qdrant_enabled": "qdrant_disabled",
+        "qdrant_reachable": "qdrant_unreachable",
+    }
+    for key, failure in required_true.items():
+        if status.get(key) is not True:
+            failures.append(failure)
+
+    collections = status.get("qdrant_collections")
+    if isinstance(collections, dict):
+        missing = [
+            role
+            for role, collection in collections.items()
+            if not isinstance(collection, dict) or collection.get("exists") is not True
+        ]
+        if missing:
+            failures.append(f"qdrant_collections_missing:{','.join(sorted(missing))}")
+    else:
+        failures.append("qdrant_collections_unavailable")
+
+    if status.get("embedding_provider") == "none":
+        failures.append("embedding_provider_none")
+    if status.get("cloud_allowed") is True:
+        failures.append("cloud_allowed_enabled")
+    return failures
 
 
 if __name__ == "__main__":
