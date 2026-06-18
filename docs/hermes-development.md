@@ -53,6 +53,29 @@ The provider exposes local durable memory through tool calls and prefetch:
 
 Use `python -m hermes_memory_os.cli provider-smoke` from a Hermes workspace to verify import paths, memory add, prefetch, and turn sync.
 
+## HTTP Adapter For Reachy
+
+The HTTP adapter is not a Hermes core route. It is a separate Memory OS service boundary for Reachy and other clients that need direct low-latency recall.
+
+```bash
+python -m pip install -e ".[http]"
+export HERMES_MEMORY_HOME=/path/to/memory-data
+export HERMES_MEMORY_HTTP_HOST=0.0.0.0
+export HERMES_MEMORY_HTTP_PORT=8765
+export HERMES_MEMORY_HTTP_API_KEY=change-me-local-dev
+python -m hermes_memory_os.http_api
+```
+
+Use separate URLs in Reachy:
+
+```text
+MEMORY_OS_BASE_URL=http://SPARK_HOST:8765
+HERMES_DELEGATION_BASE_URL=http://SPARK_HOST:<hermes-runs-port>
+NAT Hermes tool base_url=http://SPARK_HOST:<hermes-chat-port>/v1
+```
+
+If `GET /health` works but `POST /v1/search` returns 404, the client is probably pointed at Hermes or another service rather than the Memory OS HTTP adapter.
+
 ## Source Ingestion
 
 Long-form source ingestion is available through the CLI:
@@ -91,4 +114,4 @@ Do not store runtime memory data in the Hermes repo or in this repo. Set `HERMES
 
 ## Boundary
 
-Hermes calls the provider adapter. Reachy calls Hermes/the memory API. Neither Hermes nor Reachy writes directly to SQLite, Qdrant, or wiki-brain files.
+Hermes calls the provider adapter when Hermes is doing reasoning work. Reachy calls the Memory OS HTTP adapter for fast recall and candidate handoff. Neither Hermes nor Reachy writes directly to SQLite, Qdrant, or wiki-brain files.

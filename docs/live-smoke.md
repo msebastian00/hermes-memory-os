@@ -140,3 +140,64 @@ Expected:
 - Unchanged sources are skipped for SQLite duplication.
 - Existing chunks are marked for semantic refresh.
 - Qdrant points are refreshed without creating duplicate SQLite source records.
+
+## HTTP Adapter Smoke
+
+Install the HTTP adapter extra and start the service:
+
+```bash
+python -m pip install -e ".[http]"
+export HERMES_MEMORY_HOME=/tmp/hermes-memory-os-http-live
+export HERMES_MEMORY_HTTP_HOST=127.0.0.1
+export HERMES_MEMORY_HTTP_PORT=8765
+export HERMES_MEMORY_HTTP_API_KEY=change-me-local-dev
+python -m hermes_memory_os.cli init
+python -m hermes_memory_os.cli add \
+  --type fact \
+  --scope system \
+  --title "Reachy direct recall" \
+  --summary "Reachy should call Memory OS directly for fast recall." \
+  --text "Reachy should call Memory OS directly for fast recall while Hermes handles slower delegated work."
+python -m hermes_memory_os.http_api
+```
+
+From another shell:
+
+```bash
+curl -sS --max-time 5 \
+  "http://127.0.0.1:${HERMES_MEMORY_HTTP_PORT}/health" | python -m json.tool
+```
+
+Expected:
+
+- `ok: true`
+- `storage_ready: true`
+- no storage paths or API keys
+
+Search:
+
+```bash
+curl -sS --max-time 5 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${HERMES_MEMORY_HTTP_API_KEY}" \
+  -d '{"query":"Reachy direct recall","source_types":["memory"],"limit":5,"mode":"recall","context":{"client":"reachy-smoke","route":"direct_recall"}}' \
+  "http://127.0.0.1:${HERMES_MEMORY_HTTP_PORT}/v1/search" | python -m json.tool
+```
+
+Candidate:
+
+```bash
+curl -sS --max-time 5 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${HERMES_MEMORY_HTTP_API_KEY}" \
+  -d '{"candidate_id":"reachy-smoke-1","kind":"semantic","content":"Mike prefers Reachy to use Memory OS directly for fast recall.","source_text":"Remember that Reachy should use Memory OS directly.","confidence":0.82,"session_id":"reachy-runtime","turn_id":"smoke","speaker":{"display_name":"Mike","trusted":true},"source":"reachy"}' \
+  "http://127.0.0.1:${HERMES_MEMORY_HTTP_PORT}/v1/candidates" | python -m json.tool
+```
+
+Troubleshooting:
+
+- `/health` works but `/v1/search` returns 404: the client is probably pointed at Hermes or another service, not this adapter.
+- `401`: `Authorization` is missing or the bearer token does not match `HERMES_MEMORY_HTTP_API_KEY`.
+- Spark localhost works but WSL cannot connect: bind to `0.0.0.0`, check firewall, check port, and check WSL-to-Spark routing.
+- `storage_ready: false`: verify `HERMES_MEMORY_HOME` or `HERMES_MEMORY_CONFIG`.
+- `semantic_ready: false`: semantic backends may be disabled; keyword/FTS recall can still work.

@@ -16,6 +16,11 @@ dependencies = [
 [project.optional-dependencies]
 test = [
   "pytest>=8.0",
+  "httpx2>=0.28",
+]
+http = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
 ]
 qdrant = [
   "qdrant-client>=1.9",
@@ -23,6 +28,7 @@ qdrant = [
 
 [project.scripts]
 hermes-memory = "hermes_memory_os.cli:main"
+hermes-memory-http = "hermes_memory_os.http_api:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

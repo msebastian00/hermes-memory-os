@@ -457,6 +457,52 @@ class MemoryStore:
             return None
         return source_chunk_result_from_chunk(chunk)
 
+    def get_adjacent_source_chunks(
+        self,
+        *,
+        source_id: str,
+        chunk_id: str,
+        direction: str = "after",
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        base_chunk = self.get_source_chunk(chunk_id)
+        if base_chunk is None or base_chunk["source_id"] != source_id:
+            return []
+
+        limit = max(1, min(20, int(limit)))
+        direction = direction if direction in {"before", "after", "around"} else "after"
+        index = int(base_chunk["chunk_index"])
+        if direction == "before":
+            clause = "sc.chunk_index < ?"
+            order = "sc.chunk_index DESC"
+            values: list[Any] = [source_id, index, limit]
+        elif direction == "around":
+            window = max(limit, 1)
+            clause = "sc.chunk_index BETWEEN ? AND ? AND sc.id != ?"
+            order = "sc.chunk_index ASC"
+            values = [source_id, max(0, index - window), index + window, chunk_id, limit]
+        else:
+            clause = "sc.chunk_index > ?"
+            order = "sc.chunk_index ASC"
+            values = [source_id, index, limit]
+
+        with self.connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT sc.*, s.title AS source_title, s.source_path, s.source_type
+                FROM source_chunks sc
+                JOIN sources s ON s.id = sc.source_id
+                WHERE s.id=? AND s.status='active' AND {clause}
+                ORDER BY {order}
+                LIMIT ?
+                """,
+                values,
+            ).fetchall()
+        chunks = [_source_chunk_from_row(row) for row in rows]
+        if direction == "before":
+            chunks.reverse()
+        return [source_chunk_result_from_chunk(chunk) for chunk in chunks]
+
     def create_extraction_candidate(
         self,
         *,
@@ -575,7 +621,9 @@ class MemoryStore:
         started = time.perf_counter()
         results: list[dict[str, Any]] = []
         with self.connection() as conn:
-            if not source_types:
+            memory_requested = not source_types or "memory" in source_types
+            source_type_filters = [item for item in (source_types or []) if item != "memory"]
+            if memory_requested:
                 memory_rows = conn.execute(
                     """
                     SELECT m.*, bm25(memories_fts) AS rank
@@ -602,13 +650,13 @@ class MemoryStore:
                     )
 
             remaining = max(limit - len(results), 0)
-            if remaining:
+            if remaining and (not source_types or source_type_filters):
                 source_filter_sql = ""
                 params: list[Any] = [query]
-                if source_types:
-                    placeholders = ", ".join("?" for _ in source_types)
+                if source_type_filters:
+                    placeholders = ", ".join("?" for _ in source_type_filters)
                     source_filter_sql = f" AND s.source_type IN ({placeholders})"
-                    params.extend(source_types)
+                    params.extend(source_type_filters)
                 params.append(remaining)
                 chunk_rows = conn.execute(
                     f"""
@@ -852,6 +900,8 @@ def source_chunk_result_from_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": chunk["id"],
         "kind": "source_chunk",
+        "source_id": chunk["source_id"],
+        "chunk_id": chunk["id"],
         "title": chunk.get("heading") or chunk.get("source_title"),
         "summary": chunk["text"][:240],
         "text": chunk["text"],

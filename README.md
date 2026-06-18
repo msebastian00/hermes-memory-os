@@ -14,6 +14,7 @@ This repository contains the local memory substrate and current semantic retriev
 - source-type filters, citations, and re-index state for books, transcripts, wiki notes, articles, and subtitles
 - CLI commands for `init`, `doctor`, `ingest`, `search`, `add`, `archive`, `candidates`, and `provider-smoke`
 - Hermes provider adapter with `prefetch`, `sync_turn`, and source-labeled retrieval
+- optional HTTP adapter for direct Reachy/agent recall over `/health`, `/v1/search`, `/v1/sources/chunks`, and `/v1/candidates`
 - reviewed extraction candidates and self-learning event logging
 
 ## Quick Start
@@ -27,6 +28,27 @@ python -m hermes_memory_os.cli search "Reachy memory bridge"
 ```
 
 Storage paths are intentionally not hardcoded. Use a different `HERMES_MEMORY_HOME` on WSL2, DGX Spark, or any other host.
+
+## HTTP Adapter
+
+The HTTP adapter is the direct Memory OS service boundary for Reachy and other clients that should not call Hermes for fast recall. It is separate from Hermes core and reuses the same Memory OS storage/retrieval code as the CLI and provider.
+
+```bash
+python -m pip install -e ".[http]"
+export HERMES_MEMORY_HOME=/path/to/hermes-memory-data
+export HERMES_MEMORY_HTTP_HOST=0.0.0.0
+export HERMES_MEMORY_HTTP_PORT=8765
+export HERMES_MEMORY_HTTP_API_KEY=change-me-local-dev
+python -m hermes_memory_os.http_api
+```
+
+Smoke check:
+
+```bash
+curl -sS "http://127.0.0.1:${HERMES_MEMORY_HTTP_PORT}/health" | python -m json.tool
+```
+
+Reachy should point `MEMORY_OS_BASE_URL` at this adapter, not at a Hermes chat/runs endpoint.
 
 ## Semantic Setup
 
@@ -140,4 +162,4 @@ Hermes should import the provider through `hermes_memory_os.hermes_plugin:create
 
 Hermes Memory OS owns durable memory: SQLite, Qdrant, raw events, durable memories, source/chunk metadata, retrieval logs, injection logs, feedback, extraction candidates, and reviewed self-learning events.
 
-Reachy owns embodied working memory locally: wake/listening state, speaker confidence, body/camera context, room awareness, latency budgets, and short-lived conversational state. Reachy calls Hermes memory through the provider/API boundary and does not write directly to SQLite or Qdrant.
+Reachy owns embodied working memory locally: wake/listening state, speaker confidence, body/camera context, room awareness, latency budgets, and short-lived conversational state. Reachy calls the Memory OS HTTP adapter for fast recall and candidate handoff, and Hermes calls Memory OS through the provider when Hermes is the active reasoning agent. Neither Hermes nor Reachy writes directly to SQLite or Qdrant.
