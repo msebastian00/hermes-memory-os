@@ -38,11 +38,15 @@ class QdrantClient:
         return response.json().get("result", {})
 
     def ensure_collection(self, name: str, vector_size: int, distance: str = "Cosine") -> None:
+        if self.collection_exists(name):
+            return
         response = requests.put(
             f"{self.url}/collections/{name}",
             json={"vectors": {"size": vector_size, "distance": distance}},
             timeout=self.timeout,
         )
+        if response.status_code == 409:
+            return
         response.raise_for_status()
 
     def upsert_point(self, collection: str, point_id: str, vector: list[float], payload: dict[str, Any]) -> None:

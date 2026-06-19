@@ -1,0 +1,25 @@
+[Unit]
+Description=Hermes Memory OS HTTP Adapter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=mike
+WorkingDirectory=/home/mike/agent-platform/agent-dev/hermes-memory-os
+Environment=PYTHONPATH=/home/mike/agent-platform/agent-dev/hermes-memory-os/src
+Environment=HERMES_MEMORY_HOME=/home/mike/agent-platform/memory/hermes-memory-data
+Environment=HERMES_MEMORY_CONFIG=/home/mike/agent-platform/agent-dev/hermes-memory-os/config/hermes-memory-os.semantic.local.yml
+Environment=HERMES_MEMORY_HTTP_HOST=0.0.0.0
+Environment=HERMES_MEMORY_HTTP_PORT=8765
+EnvironmentFile=-/home/mike/agent-platform/agent-dev/hermes-memory-os/.env.http.local
+ExecStart=/home/mike/agent-platform/agent-dev/hermes-memory-os/.venv/bin/python -m hermes_memory_os.http_api
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/mike/agent-platform/memory/hermes-memory-data
+
+[Install]
+WantedBy=multi-user.target
