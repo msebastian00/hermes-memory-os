@@ -26,3 +26,6 @@ qdrant_storage/
 *.local.yaml
 config/*.local.yml
 config/*.local.yaml
+config/hermes-memory-os.http.local.yml
+.env.http.local
+config/hermes-memory-os.semantic.local.yml

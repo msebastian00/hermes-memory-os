@@ -376,8 +376,8 @@ class MemoryStore:
                 JOIN sources s ON s.id = sc.source_id
                 WHERE s.status='active'
                   AND (
-                    sc.qdrant_point_id IS NULL
-                    OR sc.indexing_state != 'indexed'
+                    (sc.qdrant_point_id IS NULL AND sc.indexing_state != 'failed')
+                    OR sc.indexing_state NOT IN ('indexed', 'failed')
                     OR sc.chunking_version != ?
                     OR COALESCE(sc.embedding_provider, '') != ?
                     OR COALESCE(sc.embedding_model, '') != ?
@@ -407,6 +407,25 @@ class MemoryStore:
                 WHERE id=?
                 """,
                 (qdrant_point_id, embedding_provider, embedding_model, chunking_version, chunk_id),
+            )
+
+    def mark_source_chunk_failed(
+        self,
+        chunk_id: str,
+        *,
+        embedding_provider: str,
+        embedding_model: str,
+        chunking_version: str = DEFAULT_CHUNKING_VERSION,
+    ) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE source_chunks
+                SET embedding_provider=?, embedding_model=?, chunking_version=?,
+                    indexing_state='failed'
+                WHERE id=?
+                """,
+                (embedding_provider, embedding_model, chunking_version, chunk_id),
             )
 
     def mark_source_chunks_for_reindex(

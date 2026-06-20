@@ -43,6 +43,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "retrieval": {
         "max_injected": 8,
         "min_final_score": 0.35,
+        "min_final_score_by_kind": {
+            "memory": 0.35,
+            "source_chunk": 0.20,
+        },
         "weights": {
             "semantic": 0.45,
             "keyword": 0.20,

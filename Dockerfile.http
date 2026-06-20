@@ -1,0 +1,17 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/hermes-memory-os/src
+
+WORKDIR /opt/hermes-memory-os
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir ".[http]"
+
+EXPOSE 8765
+
+CMD ["python", "-m", "hermes_memory_os.http_api"]

@@ -150,3 +150,64 @@ def test_app_add_semantically_indexes_durable_memory(tmp_path, monkeypatch):
         ).fetchone()
     assert row["qdrant_collection"] == "hermes_memories"
     assert row["qdrant_point_id"] == FakeQdrant.upserts[0]["point_id"]
+
+
+def test_app_ingest_drains_pending_source_chunks(tmp_path, monkeypatch):
+    FakeQdrant.upserts = []
+    FakeQdrant.ensured = []
+    monkeypatch.setattr("hermes_memory_os.app.QdrantClient", FakeQdrant)
+    monkeypatch.setattr("hermes_memory_os.app.build_embedder", lambda config: FakeEmbedder())
+    config_path = tmp_path / "config.yml"
+    data_dir = tmp_path / "data"
+    _write_semantic_config(config_path, data_dir)
+    transcripts = []
+    for index in range(3):
+        transcript = tmp_path / f"meeting-{index}.srt"
+        transcript.write_text(
+            f"1\n00:00:0{index},000 --> 00:00:0{index + 1},000\nHermes chunk {index}.\n",
+            encoding="utf-8",
+        )
+        transcripts.append(transcript)
+
+    app = MemoryApp.from_config(config_path=config_path)
+    app.init_storage()
+    result = app.ingest_sources(transcripts)
+
+    assert result["indexed"] == 3
+    assert result["semantic_indexed"] == 3
+    assert result["semantic_failed"] == 0
+    assert len(FakeQdrant.upserts) == 3
+
+
+def test_failed_source_chunk_does_not_block_drain(tmp_path, monkeypatch):
+    class SometimesFailingEmbedder(FakeEmbedder):
+        def embed(self, text: str) -> list[float]:
+            if "bad chunk" in text:
+                raise RuntimeError("bad embedding")
+            return super().embed(text)
+
+    FakeQdrant.upserts = []
+    FakeQdrant.ensured = []
+    monkeypatch.setattr("hermes_memory_os.app.QdrantClient", FakeQdrant)
+    monkeypatch.setattr("hermes_memory_os.app.build_embedder", lambda config: SometimesFailingEmbedder())
+    config_path = tmp_path / "config.yml"
+    data_dir = tmp_path / "data"
+    _write_semantic_config(config_path, data_dir)
+    good = tmp_path / "good.srt"
+    bad = tmp_path / "bad.srt"
+    good.write_text("1\n00:00:01,000 --> 00:00:02,000\ngood chunk\n", encoding="utf-8")
+    bad.write_text("1\n00:00:01,000 --> 00:00:02,000\nbad chunk\n", encoding="utf-8")
+
+    app = MemoryApp.from_config(config_path=config_path)
+    app.init_storage()
+    result = app.ingest_sources([bad, good])
+
+    assert result["semantic_indexed"] == 1
+    assert result["semantic_failed"] == 1
+    with app.store.connection() as conn:
+        states = {
+            row["text"]: row["indexing_state"]
+            for row in conn.execute("SELECT text, indexing_state FROM source_chunks")
+        }
+    assert states["bad chunk"] == "failed"
+    assert states["good chunk"] == "indexed"

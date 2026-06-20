@@ -132,6 +132,40 @@ def test_semantic_failure_falls_back_to_fts_and_logs_context(tmp_path):
     assert context["semantic_error"] == "RuntimeError"
 
 
+def test_source_chunks_can_use_lower_kind_specific_threshold(tmp_path):
+    store = MemoryStore(tmp_path / "memory.sqlite")
+    store.init()
+    source_id, _ = store.upsert_source_file(
+        source_path="/transcripts/responsibility.srt",
+        source_type="subtitle",
+        title="Responsibility Transcript",
+        content="1\n00:00:01,000 --> 00:00:02,000\nResponsibility matters.",
+        chunks=[
+            {
+                "timestamp_start": "00:00:01.000",
+                "timestamp_end": "00:00:02.000",
+                "text": "Responsibility matters.",
+            }
+        ],
+    )
+    with store.connection() as conn:
+        chunk_id = conn.execute(
+            "SELECT id FROM source_chunks WHERE source_id=?",
+            (source_id,),
+        ).fetchone()["id"]
+    semantic = store.get_source_chunk_result(chunk_id)
+    semantic["semantic_score"] = 0.5
+
+    config = _config(min_score=0.35)
+    config["min_final_score_by_kind"] = {"source_chunk": 0.20}
+    retriever = Retriever(store, config, semantic_backend=StaticSemanticBackend([semantic]))
+
+    results = retriever.search("responsibility", source_types=["subtitle"])
+
+    assert results
+    assert results[0]["id"] == chunk_id
+
+
 def test_semantic_backend_hydrates_source_chunks_and_applies_source_type_filter(tmp_path):
     store = MemoryStore(tmp_path / "memory.sqlite")
     store.init()

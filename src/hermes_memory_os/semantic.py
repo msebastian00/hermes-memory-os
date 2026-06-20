@@ -33,38 +33,47 @@ class SemanticIndexer:
         self.chunking_version = chunking_version
 
     def index_pending_source_chunks(self, *, limit: int = 100) -> dict[str, int]:
-        chunks = self.store.list_chunks_needing_index(
-            embedding_provider=self.embedding_provider,
-            embedding_model=self.embedding_model,
-            chunking_version=self.chunking_version,
-            limit=limit,
-        )
         indexed = 0
         failed = 0
         collection = self.collections.get("sources") or self.collections.get("wiki") or "hermes_sources"
-        for chunk in chunks:
-            try:
-                point_id = source_chunk_point_id(chunk)
-                vector = self.embedder.embed(chunk["text"])
-                payload = source_chunk_payload(chunk)
-                payload["embedding_provider"] = self.embedding_provider
-                payload["embedding_model"] = self.embedding_model
-                self.qdrant.upsert_point(
-                    collection,
-                    point_id,
-                    vector,
-                    payload,
-                )
-                self.store.mark_source_chunk_indexed(
-                    chunk["id"],
-                    qdrant_point_id=point_id,
-                    embedding_provider=self.embedding_provider,
-                    embedding_model=self.embedding_model,
-                    chunking_version=self.chunking_version,
-                )
-                indexed += 1
-            except Exception:
-                failed += 1
+        while True:
+            chunks = self.store.list_chunks_needing_index(
+                embedding_provider=self.embedding_provider,
+                embedding_model=self.embedding_model,
+                chunking_version=self.chunking_version,
+                limit=limit,
+            )
+            if not chunks:
+                break
+            for chunk in chunks:
+                try:
+                    point_id = source_chunk_point_id(chunk)
+                    vector = self.embedder.embed(chunk["text"])
+                    payload = source_chunk_payload(chunk)
+                    payload["embedding_provider"] = self.embedding_provider
+                    payload["embedding_model"] = self.embedding_model
+                    self.qdrant.upsert_point(
+                        collection,
+                        point_id,
+                        vector,
+                        payload,
+                    )
+                    self.store.mark_source_chunk_indexed(
+                        chunk["id"],
+                        qdrant_point_id=point_id,
+                        embedding_provider=self.embedding_provider,
+                        embedding_model=self.embedding_model,
+                        chunking_version=self.chunking_version,
+                    )
+                    indexed += 1
+                except Exception:
+                    self.store.mark_source_chunk_failed(
+                        chunk["id"],
+                        embedding_provider=self.embedding_provider,
+                        embedding_model=self.embedding_model,
+                        chunking_version=self.chunking_version,
+                    )
+                    failed += 1
         return {"semantic_indexed": indexed, "semantic_failed": failed}
 
     def index_memory(self, memory_id: str) -> dict[str, int]:

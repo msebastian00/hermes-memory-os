@@ -1,0 +1,46 @@
+paths:
+  base_dir: /data/hermes-memory
+  vault_dir: /data/hermes-memory/vault
+  sqlite_path: /data/hermes-memory/db/memory.sqlite
+  logs_dir: /data/hermes-memory/logs
+
+wiki_brain:
+  enabled: true
+  paths: []
+
+qdrant:
+  enabled: true
+  url: http://qdrant:6333
+  vector_size: 768
+  distance: Cosine
+  collections:
+    memories: hermes_memories
+    wiki: hermes_wiki
+    captures: hermes_captures
+    sources: hermes_sources
+    agent_learning: hermes_agent_learning
+
+embeddings:
+  provider: ollama
+  base_url: http://host.docker.internal:11434
+  model: nomic-embed-text
+  dimension: 768
+
+retrieval:
+  max_injected: 8
+  min_final_score: 0.35
+  weights:
+    semantic: 0.45
+    keyword: 0.20
+    entity: 0.15
+    scope: 0.10
+    recency: 0.05
+    trust: 0.05
+
+privacy:
+  cloud_allowed: false
+  never_send_raw_events_to_cloud: true
+
+self_learning:
+  enabled: true
+  mode: log_and_review

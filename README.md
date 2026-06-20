@@ -81,6 +81,22 @@ python -m hermes_memory_os.cli search "conceptually related wording"
 
 When semantic services are enabled, `ingest` embeds source chunks into Qdrant and `add` embeds durable memories. `search` merges Qdrant semantic results with SQLite FTS results and falls back to FTS if Qdrant or embeddings fail.
 
+Source chunks are usually shorter and noisier than durable memories, so retrieval can use lower thresholds for them:
+
+```yaml
+retrieval:
+  min_final_score: 0.35
+  min_final_score_by_kind:
+    memory: 0.35
+    source_chunk: 0.20
+```
+
+For live tuning, override the threshold on a single CLI search:
+
+```bash
+python -m hermes_memory_os.cli search "responsibility" --source-type subtitle --min-score 0.15
+```
+
 ## Long-Form Ingestion
 
 `ingest` accepts files or directories. Supported source formats:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -31,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=8)
     search.add_argument("--source-type", action="append", help="Filter source chunks by source type. May be repeated.")
+    search.add_argument("--min-score", type=float, help="Temporarily override retrieval.min_final_score.")
 
     add = sub.add_parser("add", help="Add a durable memory.")
     add.add_argument("--type", required=True, dest="memory_type")
@@ -97,7 +99,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     try:
-        app = MemoryApp.from_config(config_path=args.config, data_dir=args.data_dir)
+        config_path = args.config or os.environ.get("HERMES_MEMORY_CONFIG") or None
+        app = MemoryApp.from_config(config_path=config_path, data_dir=args.data_dir)
         if args.command == "init":
             app.init_storage()
             print_json({"initialized": True, "base_dir": str(app.config.base_dir)})
@@ -118,6 +121,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "search":
+            if args.min_score is not None:
+                app.retriever.config["min_final_score"] = args.min_score
+                app.retriever.config["min_final_score_by_kind"] = {}
             print_json(
                 {
                     "results": app.retriever.search(
@@ -207,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "provider-smoke":
-            provider = create_provider({"config_path": args.config, "data_dir": args.data_dir})
+            provider = create_provider({"config_path": config_path, "data_dir": args.data_dir})
             added = provider.handle_tool_call(
                 "hermes_memory_add",
                 {

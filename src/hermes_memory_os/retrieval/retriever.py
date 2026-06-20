@@ -73,6 +73,7 @@ class Retriever:
             ranked,
             min_score=float(self.config.get("min_final_score", 0.35)),
             limit=limit,
+            min_score_by_kind=self.config.get("min_final_score_by_kind"),
         )
         self.store.log_retrieval(
             query,

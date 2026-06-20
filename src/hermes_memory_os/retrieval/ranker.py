@@ -33,5 +33,18 @@ def rank_results(results: list[dict[str, Any]], weights: dict[str, float] | None
     return sorted(ranked, key=lambda row: row["final_score"], reverse=True)
 
 
-def filter_confident(results: list[dict[str, Any]], min_score: float, limit: int) -> list[dict[str, Any]]:
-    return [item for item in results if item.get("final_score", 0.0) >= min_score][:limit]
+def filter_confident(
+    results: list[dict[str, Any]],
+    min_score: float,
+    limit: int,
+    *,
+    min_score_by_kind: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
+    thresholds = min_score_by_kind or {}
+    confident = []
+    for item in results:
+        kind = str(item.get("kind") or "")
+        threshold = float(thresholds.get(kind, min_score))
+        if item.get("final_score", 0.0) >= threshold:
+            confident.append(item)
+    return confident[:limit]

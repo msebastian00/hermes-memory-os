@@ -103,3 +103,76 @@ qdrant:
     assert status["semantic_enabled"] is False
     assert status["qdrant_enabled"] is False
     assert status["wiki_path_status"] == [{"path": str(wiki), "exists": False}]
+
+def test_cli_uses_hermes_memory_config_env(tmp_path, capsys, monkeypatch):
+    config_path = tmp_path / "config.yml"
+    data_dir = tmp_path / "env-config-data"
+    config_path.write_text(
+        f"""
+paths:
+  base_dir: {data_dir}
+  vault_dir: {data_dir / "vault"}
+  sqlite_path: {data_dir / "db" / "memory.sqlite"}
+  logs_dir: {data_dir / "logs"}
+embeddings:
+  provider: none
+qdrant:
+  enabled: false
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_MEMORY_CONFIG", str(config_path))
+    monkeypatch.delenv("HERMES_MEMORY_HOME", raising=False)
+
+    assert main(["doctor"]) == 0
+    status = json.loads(capsys.readouterr().out)
+
+    assert status["base_dir"] == str(data_dir)
+    assert status["sqlite_path"] == str(data_dir / "db" / "memory.sqlite")
+    assert status["qdrant_enabled"] is False
+
+
+
+def test_search_min_score_override_returns_low_scoring_source_chunk(tmp_path, capsys):
+    data_dir = tmp_path / "data"
+    transcript = tmp_path / "talk.srt"
+    transcript.write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nResponsibility matters.\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            [
+                "--data-dir",
+                str(data_dir),
+                "ingest",
+                "--path",
+                str(transcript),
+                "--source-type",
+                "subtitle",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "--data-dir",
+                str(data_dir),
+                "search",
+                "responsibility",
+                "--source-type",
+                "subtitle",
+                "--min-score",
+                "0.1",
+            ]
+        )
+        == 0
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["results"]
+    assert output["results"][0]["kind"] == "source_chunk"
