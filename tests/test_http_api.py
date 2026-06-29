@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from hermes_memory_os import http_api
 from hermes_memory_os.http_api import create_app
 from hermes_memory_os.http_models import AdapterSettings
 
@@ -40,6 +41,33 @@ def test_health_reports_missing_configuration_without_paths(monkeypatch):
     assert data["degraded"] is True
     assert data["degraded_reasons"]
     assert "HERMES_MEMORY_HOME" not in str(data)
+
+
+def test_health_retries_failed_startup_and_recovers(tmp_path, monkeypatch):
+    real_memory_app = http_api.MemoryApp
+    attempts = {"count": 0}
+
+    class FlakyMemoryApp:
+        @classmethod
+        def from_config(cls, *args, **kwargs):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise RuntimeError("qdrant_unavailable")
+            return real_memory_app.from_config(*args, **kwargs)
+
+    monkeypatch.setattr(http_api, "MemoryApp", FlakyMemoryApp)
+    settings = AdapterSettings(data_dir=str(tmp_path / "memory"), retry_interval_seconds=0)
+    app = create_app(settings)
+    assert app.state.memory_app is None
+
+    client = TestClient(app)
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["storage_ready"] is True
+    assert attempts["count"] == 2
 
 
 def test_auth_required_for_v1_routes(tmp_path):

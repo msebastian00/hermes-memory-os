@@ -28,6 +28,7 @@ class AdapterSettings:
     max_query_chars: int = 1200
     max_results: int = 20
     max_summary_chars: int = 700
+    retry_interval_seconds: float = 5.0
 
     @property
     def auth_required(self) -> bool:

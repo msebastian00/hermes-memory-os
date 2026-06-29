@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,12 @@ def settings_from_env(environ: dict[str, str] | None = None) -> AdapterSettings:
         max_query_chars=_env_int(env.get("HERMES_MEMORY_HTTP_MAX_QUERY_CHARS"), 1200, minimum=100, maximum=8000),
         max_results=_env_int(env.get("HERMES_MEMORY_HTTP_MAX_RESULTS"), 20, minimum=1, maximum=100),
         max_summary_chars=_env_int(env.get("HERMES_MEMORY_HTTP_MAX_SUMMARY_CHARS"), 700, minimum=120, maximum=4000),
+        retry_interval_seconds=_env_float(
+            env.get("HERMES_MEMORY_HTTP_RETRY_INTERVAL_SECONDS"),
+            5.0,
+            minimum=0.0,
+            maximum=300.0,
+        ),
     )
 
 
@@ -43,16 +50,10 @@ def create_app(settings: AdapterSettings | None = None) -> FastAPI:
     api.state.settings = settings
     api.state.memory_app = None
     api.state.startup_error = ""
+    api.state.next_memory_app_retry_at = 0.0
+    api.state.memory_app_init_lock = threading.Lock()
 
-    try:
-        app = MemoryApp.from_config(
-            config_path=settings.config_path or None,
-            data_dir=settings.data_dir or None,
-        )
-        app.init_storage()
-        api.state.memory_app = app
-    except Exception as exc:
-        api.state.startup_error = str(exc)
+    _try_initialize_memory_app(api, force=True)
 
     @api.exception_handler(ValueError)
     async def _value_error_handler(_request: Request, exc: ValueError) -> JSONResponse:
@@ -222,7 +223,41 @@ def _auth_dependency(api: FastAPI):
 
 
 def _memory_app_or_none(api: FastAPI) -> MemoryApp | None:
-    return api.state.memory_app
+    app = api.state.memory_app
+    if app is not None:
+        return app
+    return _try_initialize_memory_app(api)
+
+
+def _try_initialize_memory_app(api: FastAPI, *, force: bool = False) -> MemoryApp | None:
+    settings: AdapterSettings = api.state.settings
+    now = time.monotonic()
+    if not force and now < float(api.state.next_memory_app_retry_at):
+        return None
+
+    lock: threading.Lock = api.state.memory_app_init_lock
+    if not lock.acquire(blocking=False):
+        return api.state.memory_app
+    try:
+        app = api.state.memory_app
+        if app is not None:
+            return app
+        try:
+            app = MemoryApp.from_config(
+                config_path=settings.config_path or None,
+                data_dir=settings.data_dir or None,
+            )
+            app.init_storage()
+            api.state.memory_app = app
+            api.state.startup_error = ""
+            return app
+        except Exception as exc:
+            api.state.startup_error = str(exc)
+            retry_interval = max(0.0, float(settings.retry_interval_seconds))
+            api.state.next_memory_app_retry_at = time.monotonic() + retry_interval
+            return None
+    finally:
+        lock.release()
 
 
 def _require_memory_app(api: FastAPI) -> MemoryApp:
@@ -274,6 +309,14 @@ def _version() -> str:
 def _env_int(value: str | None, default: int, *, minimum: int, maximum: int) -> int:
     try:
         parsed = int(value) if value not in (None, "") else default
+    except ValueError:
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def _env_float(value: str | None, default: float, *, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value) if value not in (None, "") else default
     except ValueError:
         parsed = default
     return max(minimum, min(maximum, parsed))
