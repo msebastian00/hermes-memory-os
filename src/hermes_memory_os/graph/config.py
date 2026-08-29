@@ -14,6 +14,9 @@ class GraphConfigError(ValueError):
     """Raised for invalid graph configuration."""
 
 
+DEFAULT_ALLOWED_BOOK_SOURCE_IDS = ("book-finite-infinite-games-undated",)
+
+
 @dataclass(frozen=True)
 class GraphConfig:
     config_path: Path
@@ -25,6 +28,7 @@ class GraphConfig:
     default_write_mode: str
     min_edge_confidence: float
     max_context_tokens: int
+    allowed_book_source_ids: tuple[str, ...]
 
     @classmethod
     def load(cls, path: Path) -> "GraphConfig":
@@ -41,6 +45,7 @@ class GraphConfig:
         reports_root = _resolve_path(path, graph.get("review_report_path", "graph/reports"))
         if vault_root is None:
             raise GraphConfigError("paths.vault_root is required.")
+        allowed_book_source_ids = _allowed_book_source_ids(graph.get("allowed_book_source_ids"))
         return cls(
             config_path=path,
             vault_root=vault_root,
@@ -51,6 +56,7 @@ class GraphConfig:
             default_write_mode=str(graph.get("default_write_mode", "dry_run")),
             min_edge_confidence=float(graph.get("min_edge_confidence", 0.75)),
             max_context_tokens=int(graph.get("max_context_tokens", 4000)),
+            allowed_book_source_ids=allowed_book_source_ids,
         )
 
     def require_neo4j(self) -> tuple[str, str, str]:
@@ -61,6 +67,17 @@ class GraphConfig:
         if not self.neo4j_uri.startswith(("http://", "https://")):
             raise GraphConfigError("NEO4J_URI must be an HTTP URL for the built-in client.")
         return self.neo4j_uri, self.neo4j_user, self.neo4j_password
+
+
+def _allowed_book_source_ids(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return DEFAULT_ALLOWED_BOOK_SOURCE_IDS
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise GraphConfigError("graph.allowed_book_source_ids must be a list of source IDs.")
+    values = tuple(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
+    if not values:
+        raise GraphConfigError("graph.allowed_book_source_ids must not be empty.")
+    return values
 
 
 def _resolve_path(config_path: Path, value: Any) -> Path | None:

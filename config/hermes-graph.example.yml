@@ -8,6 +8,9 @@ paths:
 
 graph:
   default_write_mode: dry_run
+  allowed_book_source_ids:
+    - book-finite-infinite-games-undated
+    - book-knowledge-graphs-and-llms-in-action-undated
   min_edge_confidence: 0.75
   max_context_tokens: 4000
   review_report_path: ../graph/reports

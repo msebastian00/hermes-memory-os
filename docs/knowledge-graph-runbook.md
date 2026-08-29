@@ -35,7 +35,7 @@ hermes-graph --config config/hermes-graph.example.yml build-book --source-id boo
 hermes-graph --config config/hermes-graph.example.yml maintenance --output graph/reports/graph-maintenance.md
 ```
 
-Allowed book source until the adapter expands: `book-finite-infinite-games-undated`.
+Allowed book sources are an explicit `graph.allowed_book_source_ids` list in the local graph configuration. Adding a source to that list does not bypass source-integrity, reviewed-chunk, Qdrant, dry-run, or approval gates.
 
 A source must return `ready_for_span_review` from `validate-book-source` before crosswalk or Neo4j upsert. `book-finite-infinite-games-undated` is currently blocked by missing raw-source section markers; its dry-run is diagnostic only. Keep the original extract unchanged, register a complete corrected derivative, then regenerate reviewed chunks and rerun the preflight.
 

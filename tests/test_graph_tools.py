@@ -322,6 +322,23 @@ def test_upsert_blocked_when_graph_disabled(tmp_path):
     assert result["write_mode"] == "dry_run"
 
 
+def test_explicitly_configured_source_id_is_accepted(tmp_path):
+    _config, config_path = _allowed_book_config(tmp_path)
+    config_path.write_text(
+        "paths:\n  vault_root: vault\ngraph:\n  default_write_mode: dry_run\n  review_report_path: reports\n  allowed_book_source_ids:\n    - book-finite-infinite-games-undated\n    - book-other\n",
+        encoding="utf-8",
+    )
+    result = handle_graph_build_book(
+        {"source_id": "book-other"},
+        config_path=config_path,
+        environ={"HERMES_GRAPH_ENABLED": "false"},
+        builder_factory=_RecordingBuilder,
+    )
+
+    assert result["status"] == "planned"
+    assert result["source_id"] == "book-other"
+
+
 def test_unsupported_source_id_is_rejected(tmp_path):
     _config, config_path = _allowed_book_config(tmp_path)
     result = handle_graph_build_book(
@@ -331,6 +348,7 @@ def test_unsupported_source_id_is_rejected(tmp_path):
     )
     assert result["status"] == "error"
     assert "Unsupported source_id" in result["error"]
+    assert result["allowed_source_ids"] == [ALLOWED_BOOK_SOURCE_ID]
 
 
 def test_report_path_cannot_escape_reports_dir(tmp_path):

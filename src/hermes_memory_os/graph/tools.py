@@ -64,17 +64,17 @@ def openai_graph_tool_schemas() -> list[dict[str, Any]]:
         {
             "name": "graph_build_book",
             "description": (
-                "Build the one supported book graph slice via hermes-graph. Defaults to "
+                "Build an explicitly configured book graph slice via hermes-graph. Defaults to "
                 "dry_run. Upsert requires human_approved=true. Never writes Qdrant, "
-                "SQLite, vault notes, or policy files. Allowed source_id: "
-                f"{ALLOWED_BOOK_SOURCE_ID}."
+                "SQLite, vault notes, or policy files. source_id must be listed in "
+                "graph.allowed_book_source_ids."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "source_id": {
                         "type": "string",
-                        "description": f"Must be {ALLOWED_BOOK_SOURCE_ID}",
+                        "description": "Must be listed in graph.allowed_book_source_ids",
                     },
                     "write_mode": {
                         "type": "string",
@@ -247,15 +247,8 @@ def handle_graph_build_book(
     human_approved = truthy(arguments.get("human_approved", False))
     enabled = graph_enabled(environ)
 
-    if source_id != ALLOWED_BOOK_SOURCE_ID:
-        result = _error(
-            f"Unsupported source_id {source_id!r}. Allowed: {ALLOWED_BOOK_SOURCE_ID}",
-            action="graph_build_book",
-            source_ids=[source_id] if source_id else [],
-            write_mode=write_mode,
-        )
-        result["allowed_source_id"] = ALLOWED_BOOK_SOURCE_ID
-        return result
+    if not source_id:
+        return _error("source_id is required", action="graph_build_book", write_mode=write_mode)
     if write_mode not in {"dry_run", "upsert"}:
         return _error("write_mode must be dry_run or upsert", action="graph_build_book", source_ids=[source_id])
     if write_mode == "upsert" and not human_approved:
@@ -279,6 +272,16 @@ def handle_graph_build_book(
         config = load_graph_config(config_path, environ)
     except (GraphConfigError, OSError) as exc:
         return _error(str(exc), action="graph_build_book", source_ids=[source_id], write_mode=write_mode)
+
+    if source_id not in config.allowed_book_source_ids:
+        result = _error(
+            f"Unsupported source_id {source_id!r}. Allowed: {list(config.allowed_book_source_ids)}",
+            action="graph_build_book",
+            source_ids=[source_id],
+            write_mode=write_mode,
+        )
+        result["allowed_source_ids"] = list(config.allowed_book_source_ids)
+        return result
 
     requested_out = arguments.get("report_out")
     report_path = None
