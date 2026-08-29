@@ -1,0 +1,13 @@
+neo4j:
+  uri_env: NEO4J_URI
+  user_env: NEO4J_USER
+  password_env: NEO4J_PASSWORD
+
+paths:
+  vault_root: ../../../wiki-brain/vault
+
+graph:
+  default_write_mode: dry_run
+  min_edge_confidence: 0.75
+  max_context_tokens: 4000
+  review_report_path: ../graph/reports

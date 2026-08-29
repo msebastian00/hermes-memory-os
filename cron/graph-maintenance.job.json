@@ -1,0 +1,31 @@
+{
+  "name": "graph-maintenance-review",
+  "enabled": false,
+  "schedule": "30 21 * * *",
+  "repeat": "forever",
+  "no_agent": true,
+  "deliver": "local",
+  "script": "graph_maintenance_cron.sh",
+  "skills": [],
+  "workdir": "/workspace/agent-dev/hermes-memory-os",
+  "command": "hermes-graph --config /workspace/agent-dev/hermes-memory-os/config/hermes-graph.example.yml maintenance --output /workspace/agent-dev/hermes-memory-os/graph/reports/graph-maintenance.md",
+  "placement": {
+    "after": "Chief Evening Processing",
+    "after_schedule": "30 20 * * *",
+    "reason": "Daily CoS reporting window ends at 20:30 UTC; this job is read-only and must not collide with evening processing or MWF book ingest at 22:30 UTC."
+  },
+  "constraints": {
+    "read_only_neo4j": true,
+    "reports_dir_only": "/workspace/agent-dev/hermes-memory-os/graph/reports",
+    "forbidden": [
+      "build-book",
+      "upsert",
+      "qdrant write",
+      "policy rewrite",
+      "vault rewrite",
+      "memory os write"
+    ],
+    "log_secrets": false,
+    "health_failure": "write degraded report under graph/reports and exit 0"
+  }
+}

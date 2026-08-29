@@ -476,6 +476,22 @@ class MemoryStore:
             return None
         return source_chunk_result_from_chunk(chunk)
 
+
+    def list_source_chunks(self, source_id: str) -> list[dict[str, Any]]:
+        """Return one source's chunks in canonical chunk order."""
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT sc.*, s.title AS source_title, s.source_path, s.source_type
+                FROM source_chunks sc
+                JOIN sources s ON s.id = sc.source_id
+                WHERE sc.source_id=?
+                ORDER BY sc.chunk_index
+                """,
+                (source_id,),
+            ).fetchall()
+        return [_source_chunk_from_row(row) for row in rows]
+
     def get_adjacent_source_chunks(
         self,
         *,

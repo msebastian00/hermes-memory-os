@@ -29,6 +29,7 @@ qdrant = [
 [project.scripts]
 hermes-memory = "hermes_memory_os.cli:main"
 hermes-memory-http = "hermes_memory_os.http_api:main"
+hermes-graph = "hermes_memory_os.graph.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

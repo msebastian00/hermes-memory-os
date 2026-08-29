@@ -8,6 +8,9 @@ tools:
   - hermes_memory_add
   - hermes_memory_archive
   - hermes_memory_feedback
+  - graph_retrieve
+  - graph_build_book
+  - graph_maintenance
 config:
   requires:
     - HERMES_MEMORY_HOME

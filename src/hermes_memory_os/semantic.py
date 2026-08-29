@@ -76,6 +76,37 @@ class SemanticIndexer:
                     failed += 1
         return {"semantic_indexed": indexed, "semantic_failed": failed}
 
+
+    def index_source_chunks(self, chunks: list[dict[str, Any]]) -> dict[str, int]:
+        """Index only explicit persisted chunks without draining unrelated pending work."""
+        indexed = failed = 0
+        collection = self.collections.get("sources") or self.collections.get("wiki") or "hermes_sources"
+        for chunk in chunks:
+            try:
+                point_id = source_chunk_point_id(chunk)
+                vector = self.embedder.embed(chunk["text"])
+                payload = source_chunk_payload(chunk)
+                payload["embedding_provider"] = self.embedding_provider
+                payload["embedding_model"] = self.embedding_model
+                self.qdrant.upsert_point(collection, point_id, vector, payload)
+                self.store.mark_source_chunk_indexed(
+                    chunk["id"],
+                    qdrant_point_id=point_id,
+                    embedding_provider=self.embedding_provider,
+                    embedding_model=self.embedding_model,
+                    chunking_version=self.chunking_version,
+                )
+                indexed += 1
+            except Exception:
+                self.store.mark_source_chunk_failed(
+                    chunk["id"],
+                    embedding_provider=self.embedding_provider,
+                    embedding_model=self.embedding_model,
+                    chunking_version=self.chunking_version,
+                )
+                failed += 1
+        return {"semantic_indexed": indexed, "semantic_failed": failed}
+
     def index_memory(self, memory_id: str) -> dict[str, int]:
         memory = self.store.get_memory(memory_id)
         if memory is None or memory["status"] != "active":

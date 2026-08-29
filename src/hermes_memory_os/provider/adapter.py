@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from hermes_memory_os.app import MemoryApp
+from hermes_memory_os.graph.tools import dispatch_graph_tool, provider_graph_tool_schemas
 
 
 class HermesMemoryOSProvider:
@@ -87,7 +88,7 @@ class HermesMemoryOSProvider:
                     "required": ["memory_id", "feedback_type"],
                 },
             },
-        ]
+        ] + provider_graph_tool_schemas()
 
     def handle_tool_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         app = self._require_app()
@@ -119,12 +120,17 @@ class HermesMemoryOSProvider:
                 evidence=arguments,
             )
             return {"logged": True, "event_id": event_id}
+        if name.startswith("graph_"):
+            return dispatch_graph_tool(name, arguments, memory_app=app)
         raise ValueError(f"Unknown memory tool: {name}")
 
     def system_prompt_block(self) -> str:
         return (
             "Hermes Memory OS is available for source-labeled local memory recall. "
-            "Use injected memory as context, not as unquestioned truth."
+            "Use injected memory as context, not as unquestioned truth. "
+            "Optional graph tools (graph_retrieve, graph_build_book, graph_maintenance) "
+            "are disabled unless HERMES_GRAPH_ENABLED=true; graph_retrieve still falls "
+            "back to Memory OS. Generated source claims stay attributed to their source."
         )
 
     def prefetch(self, query: str, context: dict[str, Any] | None = None) -> str:
