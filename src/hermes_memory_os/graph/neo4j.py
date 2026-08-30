@@ -9,20 +9,23 @@ import requests
 
 from .config import GraphConfig
 
-
 class Neo4jError(RuntimeError):
     """Raised when Neo4j rejects a graph operation."""
 
-
 class Neo4jClient:
-    def __init__(self, uri: str, user: str, password: str, timeout: int = 15):
+    def __init__(self, uri: str, user: str, password: str, timeout: int = 60, write_batch_size: int = 200):
         self.uri = uri.rstrip("/")
         self.auth = (user, password)
         self.timeout = timeout
+        self.write_batch_size = write_batch_size
 
     @classmethod
     def from_config(cls, config: GraphConfig) -> "Neo4jClient":
-        return cls(*config.require_neo4j())
+        return cls(
+            *config.require_neo4j(),
+            timeout=config.neo4j_timeout_seconds,
+            write_batch_size=config.neo4j_write_batch_size,
+        )
 
     def health(self) -> bool:
         try:
@@ -54,10 +57,11 @@ class Neo4jClient:
         for node in nodes:
             by_label[node["label"]].append({"id": node["id"], "properties": node["properties"]})
         for label, rows in by_label.items():
-            self.execute(
-                f"UNWIND $rows AS row MERGE (n:{label} {{id: row.id}}) SET n += row.properties",
-                {"rows": rows},
-            )
+            for batch in _batches(rows, self.write_batch_size):
+                self.execute(
+                    f"UNWIND $rows AS row MERGE (n:{label} {{id: row.id}}) SET n += row.properties",
+                    {"rows": batch},
+                )
 
         by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for relation in relationships:
@@ -70,11 +74,12 @@ class Neo4jClient:
                 }
             )
         for relation_type, rows in by_type.items():
-            self.execute(
-                f"UNWIND $rows AS row MATCH (a {{id: row.from_id}}), (b {{id: row.to_id}}) "
-                f"MERGE (a)-[r:{relation_type} {{id: row.id}}]->(b) SET r += row.properties",
-                {"rows": rows},
-            )
+            for batch in _batches(rows, self.write_batch_size):
+                self.execute(
+                    f"UNWIND $rows AS row MATCH (a {{id: row.from_id}}), (b {{id: row.to_id}}) "
+                    f"MERGE (a)-[r:{relation_type} {{id: row.id}}]->(b) SET r += row.properties",
+                    {"rows": batch},
+                )
         return {"nodes": len(nodes), "relationships": len(relationships)}
 
     def expand_context(self, chunk_ids: list[str], qdrant_point_ids: list[str]) -> list[dict[str, Any]]:
@@ -103,3 +108,9 @@ class Neo4jClient:
             """,
             {"chunk_ids": chunk_ids, "qdrant_point_ids": qdrant_point_ids},
         )
+
+
+def _batches(rows: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]:
+    if size < 1:
+        raise ValueError("Neo4j write_batch_size must be positive.")
+    return [rows[index : index + size] for index in range(0, len(rows), size)]

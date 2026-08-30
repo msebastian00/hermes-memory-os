@@ -2,6 +2,8 @@ neo4j:
   uri_env: NEO4J_URI
   user_env: NEO4J_USER
   password_env: NEO4J_PASSWORD
+  timeout_seconds: 60
+  write_batch_size: 200
 
 paths:
   vault_root: ../../../wiki-brain/vault

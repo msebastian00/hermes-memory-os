@@ -10,12 +10,11 @@ from hermes_memory_os.graph.maintenance import collect_maintenance, write_mainte
 from hermes_memory_os.graph.overlap import collect_overlap_review, concept_candidates, write_overlap_review_report
 from hermes_memory_os.graph.retrieval import GraphRetrievalAdapter
 from hermes_memory_os.graph.schema import SCHEMA_STATEMENTS, initialize_schema
-
+from hermes_memory_os.graph.neo4j import Neo4jClient
 
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
-
 
 def _book_config(tmp_path: Path) -> GraphConfig:
     vault = tmp_path / "vault"
@@ -88,7 +87,6 @@ graph:
     )
     return GraphConfig.load(config_path)
 
-
 class _FakeNeo4j:
     def __init__(self):
         self.statements = []
@@ -104,14 +102,12 @@ class _FakeNeo4j:
         self.relationships.update({relation["id"]: relation for relation in relationships})
         return {"nodes": len(nodes), "relationships": len(relationships)}
 
-
 def test_schema_initialization_is_idempotent():
     client = _FakeNeo4j()
 
     assert initialize_schema(client) == len(SCHEMA_STATEMENTS)
     assert initialize_schema(client) == len(SCHEMA_STATEMENTS)
     assert len(client.statements) == len(SCHEMA_STATEMENTS) * 2
-
 
 def test_book_discovery_and_dry_run_are_evidence_backed(tmp_path):
     config = _book_config(tmp_path)
@@ -155,7 +151,6 @@ def test_book_discovery_accepts_legacy_manifest_identity_and_source_path(tmp_pat
 
 
 
-
 def test_book_discovery_accepts_structured_claim_table(tmp_path):
     config = _book_config(tmp_path)
     source = config.vault_root / "02_WIKI/sources/books/book-one.md"
@@ -177,7 +172,6 @@ title: Book One
 
     assert artifact.claims == ("A source claim with evidence",)
 
-
 def test_artifact_preparation_writes_exact_spans_idempotently(tmp_path):
     config = _book_config(tmp_path)
     _write(config.vault_root / "05_QUEUE/book-ingestion/incoming/book-one.md", "---\nsource_id: book-one\n---\n")
@@ -198,7 +192,6 @@ def test_artifact_preparation_writes_exact_spans_idempotently(tmp_path):
     assert all(raw[row["span_start"]:row["span_end"]] == row["text"] for row in bodies["chunks"])
     assert all(len(row["text"]) <= 1000 for row in bodies["chunks"])
 
-
 def test_book_upsert_uses_stable_ids_without_duplicates(tmp_path):
     config = _book_config(tmp_path)
     client = _FakeNeo4j()
@@ -212,7 +205,6 @@ def test_book_upsert_uses_stable_ids_without_duplicates(tmp_path):
     assert first["status"] == second["status"] == "upserted"
     assert set(client.nodes) == first_node_ids
     assert set(client.relationships) == first_relationship_ids
-
 
 def test_retrieval_uses_qdrant_hits_before_graph_expansion():
     class Store:
@@ -270,7 +262,6 @@ def test_retrieval_uses_qdrant_hits_before_graph_expansion():
     assert packet["provenance"][0]["confidence"] == 0.8
     assert packet["claims"][0]["claim_basis"] == "author-framework"
 
-
 def test_retrieval_excludes_low_confidence_and_unsupported_graph_facts():
     class Store:
         def get_source_chunk(self, _):
@@ -323,7 +314,6 @@ def test_retrieval_excludes_low_confidence_and_unsupported_graph_facts():
     assert any("excluded_unsupported_or_low_confidence" in item for item in packet["review_warnings"])
 
 
-
 def test_retrieval_ranks_document_expansion_claims_by_query_relevance():
     class Store:
         def get_source_chunk(self, _):
@@ -353,7 +343,6 @@ def test_retrieval_ranks_document_expansion_claims_by_query_relevance():
     packet = GraphRetrievalAdapter(App(), Graph()).retrieve("life design")
     assert [claim["id"] for claim in packet["claims"]] == ["life", "generic"]
 
-
 def test_retrieval_skips_graph_when_client_is_missing():
     class Retriever:
         semantic_backend = None
@@ -369,7 +358,6 @@ def test_retrieval_skips_graph_when_client_is_missing():
     assert packet["graph_hits"] == []
     assert packet["semantic_hits"][0]["id"] == "mem-1"
 
-
 def test_maintenance_crosswalk_query_is_limited_to_book_sources():
     class Client:
         def __init__(self):
@@ -384,7 +372,6 @@ def test_maintenance_crosswalk_query_is_limited_to_book_sources():
 
     crosswalk_query = next(query for query in client.queries if "qdrant_point_id" in query)
     assert "source.source_type = \"book\"" in crosswalk_query
-
 
 def test_maintenance_report_includes_all_review_categories(tmp_path):
     output = write_maintenance_report(
@@ -402,7 +389,6 @@ def test_maintenance_report_includes_all_review_categories(tmp_path):
     assert "Duplicate Entities" in text
     assert "Claims Without Evidence" in text
     assert "Missing Qdrant Crosswalk" in text
-
 
 def test_graph_builder_handles_nested_raw_book_paths(tmp_path):
     config = _book_config(tmp_path)
@@ -428,7 +414,6 @@ def test_graph_builder_handles_nested_raw_book_paths(tmp_path):
     assert all(not item["source_locator"].startswith("..") for item in evidence)
     assert any(item["source_locator"].startswith("06_GENERATED/") for item in evidence)
 
-
 def test_source_integrity_uses_immutable_manifest_section_requirement(tmp_path):
     config = _book_config(tmp_path)
     vault = config.vault_root
@@ -451,7 +436,6 @@ def test_source_integrity_uses_immutable_manifest_section_requirement(tmp_path):
     assert integrity["status"] == "blocked"
     assert integrity["missing_sections"] == [4]
 
-
 def test_book_discovery_accepts_evidence_backed_claim_bullets(tmp_path):
     config = _book_config(tmp_path)
     source = config.vault_root / "02_WIKI/sources/books/book-one.md"
@@ -469,3 +453,29 @@ title: Book One
     artifact = discover_book(config.vault_root, "book-one")
 
     assert artifact.claims == ("A supported source claim with a cited basis.",)
+
+
+def test_neo4j_upsert_batches_large_source_writes(monkeypatch):
+    client = Neo4jClient("http://neo4j:7474", "neo4j", "not-a-secret", write_batch_size=2)
+    calls = []
+    monkeypatch.setattr(client, "execute", lambda statement, parameters=None: calls.append(parameters["rows"]) or [])
+
+    nodes = [
+        {"id": f"chunk-{index}", "label": "Chunk", "properties": {"id": f"chunk-{index}"}}
+        for index in range(5)
+    ]
+    relationships = [
+        {
+            "id": f"rel-{index}",
+            "type": "HAS_CHUNK",
+            "from_id": "document-one",
+            "to_id": f"chunk-{index}",
+            "properties": {"id": f"rel-{index}"},
+        }
+        for index in range(5)
+    ]
+
+    result = client.upsert(nodes, relationships)
+
+    assert result == {"nodes": 5, "relationships": 5}
+    assert [len(rows) for rows in calls] == [2, 2, 1, 2, 2, 1]
