@@ -16,7 +16,7 @@ from .builder import _find_manifest, _find_source_page, _parse_claims, _parse_re
 from .config import GraphConfig
 
 GENERATOR = "hermes-graph-artifact-prep-v1"
-DEFAULT_MAX_INPUT_CHARS = 6000
+DEFAULT_MAX_INPUT_CHARS = 4000
 _SECTION_RANGE = re.compile(r"\d+\s*[-–]\s*\d+")
 
 

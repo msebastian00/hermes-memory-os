@@ -6,7 +6,7 @@ import pytest
 
 from hermes_memory_os.app import MemoryApp
 from hermes_memory_os.db.store import MemoryStore
-from hermes_memory_os.graph.artifact_prep import prepare_book_artifacts
+from hermes_memory_os.graph.artifact_prep import embedding_input_limit, prepare_book_artifacts
 from hermes_memory_os.graph.builder import discover_book
 from hermes_memory_os.graph.config import GraphConfig
 from hermes_memory_os.graph.crosswalk import CrosswalkError, index_book_crosswalk, write_crosswalk
@@ -241,3 +241,8 @@ def test_partial_index_does_not_supersede_prior_source(tmp_path, monkeypatch):
     assert app.store.get_source(old_id)["status"] == "active"
     with pytest.raises(CrosswalkError, match="incomplete"):
         write_crosswalk(result, tmp_path / "out.json")
+
+
+def test_embedding_input_default_is_conservative_for_nomic_context(monkeypatch):
+    monkeypatch.delenv("HERMES_EMBEDDING_MAX_INPUT_CHARS", raising=False)
+    assert embedding_input_limit() == 4000

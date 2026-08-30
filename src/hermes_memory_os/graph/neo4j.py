@@ -84,7 +84,9 @@ class Neo4jClient:
             """
             MATCH (seed:Chunk)
             WHERE seed.id IN $chunk_ids OR seed.qdrant_point_id IN $qdrant_point_ids
-            OPTIONAL MATCH (seed)<-[:HAS_CHUNK]-(document:Document)-[:HAS_CHUNK]->(claim_chunk:Chunk)
+            MATCH (source:Source)-[:CONTAINS]->(document:Document)-[:HAS_CHUNK]->(seed)
+            WHERE coalesce(source.graph_status, "active") = "active"
+            OPTIONAL MATCH (document)-[:HAS_CHUNK]->(claim_chunk:Chunk)
             OPTIONAL MATCH (claim_chunk)-[:SUPPORTS]->(claim:Claim)
             OPTIONAL MATCH (evidence:Evidence)-[:SUPPORTS]->(claim)
             WHERE evidence.chunk_id = claim_chunk.id

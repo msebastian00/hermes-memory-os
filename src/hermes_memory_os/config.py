@@ -39,7 +39,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "base_url": "http://localhost:11434",
         "model": "nomic-embed-text",
         "dimension": 768,
-        "max_input_chars": 6000,
+        "max_input_chars": 4000,
     },
     "retrieval": {
         "max_injected": 8,

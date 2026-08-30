@@ -5,6 +5,7 @@ from pathlib import Path
 from hermes_memory_os.graph.builder import GraphBookBuilder, discover_book
 from hermes_memory_os.graph.artifact_prep import prepare_book_artifacts
 from hermes_memory_os.graph.config import GraphConfig
+from hermes_memory_os.graph.source_integrity import validate_book_source
 from hermes_memory_os.graph.maintenance import collect_maintenance, write_maintenance_report
 from hermes_memory_os.graph.overlap import collect_overlap_review, concept_candidates, write_overlap_review_report
 from hermes_memory_os.graph.retrieval import GraphRetrievalAdapter
@@ -401,3 +402,70 @@ def test_maintenance_report_includes_all_review_categories(tmp_path):
     assert "Duplicate Entities" in text
     assert "Claims Without Evidence" in text
     assert "Missing Qdrant Crosswalk" in text
+
+
+def test_graph_builder_handles_nested_raw_book_paths(tmp_path):
+    config = _book_config(tmp_path)
+    vault = config.vault_root
+    original = vault / "03_RESOURCES/books/raw/book-one.md"
+    nested = vault / "03_RESOURCES/books/raw/book-one/content/book-one.md"
+    raw_text = original.read_text(encoding="utf-8")
+    _write(nested, raw_text)
+    original.unlink()
+    manifest = vault / "03_RESOURCES/books/raw/book-one/manifest.md"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace(
+            "03_RESOURCES/books/raw/book-one.md",
+            "03_RESOURCES/books/raw/book-one/content/book-one.md",
+        ),
+        encoding="utf-8",
+    )
+
+    report = GraphBookBuilder(config).build("book-one", write_mode="dry_run")
+
+    evidence = [node["properties"] for node in report["plan"]["nodes"] if node["label"] == "Evidence"]
+    assert evidence
+    assert all(not item["source_locator"].startswith("..") for item in evidence)
+    assert any(item["source_locator"].startswith("06_GENERATED/") for item in evidence)
+
+
+def test_source_integrity_uses_immutable_manifest_section_requirement(tmp_path):
+    config = _book_config(tmp_path)
+    vault = config.vault_root
+    raw_path = vault / "03_RESOURCES/books/raw/book-one.md"
+    complete = raw_path.read_text(encoding="utf-8")
+    incomplete = complete.replace("# 4\nSection 4\n", "")
+    raw_path.write_text(incomplete, encoding="utf-8")
+    manifest = vault / "03_RESOURCES/books/raw/book-one/manifest.md"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8")
+        .replace(hashlib.sha256(complete.encode("utf-8")).hexdigest(), hashlib.sha256(incomplete.encode("utf-8")).hexdigest())
+        + "\n## Completeness\nSource text contains all 10 numbered sections.\n",
+        encoding="utf-8",
+    )
+    _write(vault / "05_QUEUE/book-ingestion/incoming/book-one.md", "---\nsource_id: book-one\n---\n")
+
+    prepare_book_artifacts(config, "book-one", write_mode="upsert", max_chunk_chars=1000)
+    integrity = validate_book_source(config, "book-one")
+
+    assert integrity["status"] == "blocked"
+    assert integrity["missing_sections"] == [4]
+
+
+def test_book_discovery_accepts_evidence_backed_claim_bullets(tmp_path):
+    config = _book_config(tmp_path)
+    source = config.vault_root / "02_WIKI/sources/books/book-one.md"
+    source.write_text(
+        """---
+source_id: book-one
+title: Book One
+---
+### Evidence-Backed Claims
+- A supported source claim with a cited basis.
+""",
+        encoding="utf-8",
+    )
+
+    artifact = discover_book(config.vault_root, "book-one")
+
+    assert artifact.claims == ("A supported source claim with a cited basis.",)

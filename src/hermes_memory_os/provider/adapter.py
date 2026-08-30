@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from hermes_memory_os.app import MemoryApp
-from hermes_memory_os.graph.tools import dispatch_graph_tool, provider_graph_tool_schemas
+from hermes_memory_os.graph.flags import graph_enabled
+from hermes_memory_os.graph.tools import dispatch_graph_tool, handle_graph_retrieve, provider_graph_tool_schemas
+
+
+_GRAPH_PREFETCH_MAX_CLAIMS = 3
+_GRAPH_PREFETCH_MAX_QUOTE_CHARS = 320
 
 
 class HermesMemoryOSProvider:
@@ -141,18 +146,36 @@ class HermesMemoryOSProvider:
             context=context,
             source_types=context.get("source_types"),
         )
-        if not results:
-            return ""
-        lines = ["## Relevant Local Memory"]
+        lines: list[str] = []
         memory_ids = []
-        for item in results:
-            memory_ids.append(item["id"])
-            source = item.get("citation") or _format_source(item.get("source"))
-            title = item.get("title") or item["id"]
-            summary = item.get("summary") or item.get("text", "")[:240]
-            lines.append(f"- {summary} Source: {source}.")
-            if title and title not in summary:
-                lines[-1] = f"- {title}: {summary} Source: {source}."
+        if results:
+            lines.append("## Relevant Local Memory")
+            for item in results:
+                memory_ids.append(item["id"])
+                source = item.get("citation") or _format_source(item.get("source"))
+                title = item.get("title") or item["id"]
+                summary = item.get("summary") or item.get("text", "")[:240]
+                lines.append(f"- {summary} Source: {source}.")
+                if title and title not in summary:
+                    lines[-1] = f"- {title}: {summary} Source: {source}."
+
+        if graph_enabled():
+            try:
+                packet = handle_graph_retrieve(
+                    app,
+                    {"query": query, "profile": "minimal", "max_context_tokens": 800},
+                )
+            except Exception:
+                packet = {}
+            graph_lines = _graph_prefetch_lines(packet)
+            if graph_lines:
+                if lines:
+                    lines.append("")
+                lines.append("## Evidence-Backed Graph Context")
+                lines.extend(graph_lines)
+
+        if not lines:
+            return ""
         injected = "\n".join(lines)
         app.store.log_injection(memory_ids, injected)
         return injected
@@ -225,3 +248,30 @@ def _format_source(source: Any) -> str:
     if isinstance(source, list):
         return ", ".join(str(item) for item in source) if source else "local memory"
     return str(source)
+
+
+def _graph_prefetch_lines(packet: dict[str, Any]) -> list[str]:
+    """Render only evidence-backed graph claims into normal provider context."""
+
+    lines = []
+    for provenance in list(packet.get("provenance") or [])[:_GRAPH_PREFETCH_MAX_CLAIMS]:
+        claim = _compact_text(provenance.get("claim_text"))
+        quote = _compact_text(provenance.get("quote"))[:_GRAPH_PREFETCH_MAX_QUOTE_CHARS]
+        source_id = str(provenance.get("source_id") or "unknown-source")
+        chunk_id = str(provenance.get("source_chunk_id") or provenance.get("chunk_id") or "unknown-chunk")
+        confidence = provenance.get("confidence")
+        if not claim or not quote:
+            continue
+        try:
+            confidence_text = f"{float(confidence):.2f}"
+        except (TypeError, ValueError):
+            confidence_text = "unscored"
+        lines.append(
+            f"- Source claim: {claim}. Evidence: {quote}. "
+            f"Source: {source_id}/{chunk_id}; confidence {confidence_text}."
+        )
+    return lines
+
+
+def _compact_text(value: Any) -> str:
+    return " ".join(str(value or "").split())

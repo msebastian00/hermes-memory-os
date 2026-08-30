@@ -367,9 +367,9 @@ class _GraphPlan:
                 "evidence_type": evidence_type,
                 "confidence": confidence,
                 "created_at": now_iso(),
-                "source_locator": _relative(book.raw_path.parents[3], book.synthesis_path)
+                "source_locator": _relative(_vault_root_from_raw_path(book.raw_path), book.synthesis_path)
                 if evidence_type == "summary"
-                else _relative(book.raw_path.parents[3], book.retrieval_chunks_path),
+                else _relative(_vault_root_from_raw_path(book.raw_path), book.retrieval_chunks_path),
                 "extracted_by": self.source,
             },
         )
@@ -484,6 +484,12 @@ def _parse_claims(body: str) -> list[str]:
         if claims:
             return claims
 
+    evidence_backed = re.search(r"### Evidence-Backed Claims\s*\n(.*?)(?=\n### |\Z)", body, flags=re.DOTALL)
+    if evidence_backed is not None:
+        claims = [item.strip() for item in re.findall(r"^\s*[-*]\s+(.+)$", evidence_backed.group(1), flags=re.MULTILINE)]
+        if claims:
+            return claims
+
     table = re.search(r"^## Claims[^\n]*\n(?:\s*\n)*(?P<rows>(?:\|.*\n)+)", body, flags=re.IGNORECASE | re.MULTILINE)
     if table is None:
         return []
@@ -522,6 +528,13 @@ def _normalize(value: str) -> str:
 
 def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+
+
+def _vault_root_from_raw_path(raw_path: Path) -> Path:
+    for parent in raw_path.parents:
+        if parent.name == "03_RESOURCES":
+            return parent.parent
+    raise BookDiscoveryError(f"Raw source is not located under 03_RESOURCES: {raw_path}")
 
 
 def _relative(root: Path, path: Path) -> str:

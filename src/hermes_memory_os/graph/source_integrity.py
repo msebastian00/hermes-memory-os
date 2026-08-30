@@ -29,7 +29,7 @@ def validate_book_artifacts(book: Any) -> dict[str, Any]:
     """Validate discovered book artifacts without writing to a source system."""
     text = book.raw_path.read_text(encoding="utf-8")
     actual_hash = _digest(text)
-    expected = _expected_sections(book.chunks)
+    expected = _expected_sections(book)
     markers = _section_markers(text)
     observed = sorted(set(markers))
     missing = sorted(expected - set(observed))
@@ -70,7 +70,7 @@ def write_source_integrity_report(result: dict[str, Any], output_path: Path) -> 
     return output_path
 
 
-def _expected_sections(chunks: tuple[dict[str, Any], ...]) -> set[int]:
+def _chunk_expected_sections(chunks: tuple[dict[str, Any], ...]) -> set[int]:
     values: set[int] = set()
     for chunk in chunks:
         match = _SECTION_RANGE.search(str(chunk.get("section") or ""))
@@ -92,3 +92,20 @@ def _section_markers(text: str) -> list[int]:
 
 def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _expected_sections(book: Any) -> set[int]:
+    """Use immutable manifest requirements before mutable retrieval metadata."""
+
+    manifest_text = book.manifest_path.read_text(encoding="utf-8")
+    structured = re.search(
+        r"(?im)^\s*expected_section_count\s*:\s*(\d{1,4})\s*$",
+        manifest_text,
+    )
+    narrative = re.search(r"\ball\s+(\d{1,4})\s+numbered sections\b", manifest_text, flags=re.IGNORECASE)
+    match = structured or narrative
+    if match is not None:
+        count = int(match.group(1))
+        if count > 0:
+            return set(range(1, count + 1))
+    return _chunk_expected_sections(book.chunks)
