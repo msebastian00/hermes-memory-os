@@ -13,6 +13,7 @@ from .config import GraphConfig, GraphConfigError
 from .crosswalk import index_book_crosswalk, write_crosswalk
 from .policy import GraphPolicyBuilder
 from .autopromote import promote_queued_book, promote_queued_books
+from .artifact_prep import prepare_book_artifacts
 from .overlap import concept_candidates, collect_overlap_review, write_overlap_review_report
 from .maintenance import collect_maintenance, write_maintenance_report
 from .source_integrity import validate_book_source, write_source_integrity_report
@@ -70,6 +71,11 @@ def main(argv: list[str] | None = None) -> int:
     promote.add_argument("--write-mode", choices=("dry_run", "upsert"), default="dry_run")
 
     promote_all = sub.add_parser("promote-queued", help="Autonomously sweep all queued books and promote machine-ready sources.")
+
+    prepare = sub.add_parser("prepare-book-artifacts", help="Plan or prepare deterministic retrieval/span artifacts for a reviewed book.")
+    prepare.add_argument("--source-id", required=True)
+    prepare.add_argument("--write-mode", choices=("dry_run", "upsert"), default="dry_run")
+    prepare.add_argument("--max-chunk-chars", type=int, default=None)
     promote_all.add_argument("--memory-config", required=True, type=Path)
     promote_all.add_argument("--data-dir", type=Path)
     promote_all.add_argument("--write-mode", choices=("dry_run", "upsert"), default="dry_run")
@@ -184,6 +190,16 @@ def main(argv: list[str] | None = None) -> int:
                 output = args.crosswalk_out or config.reports_root / "crosswalks" / f"{args.source_id}.json"
                 result["crosswalk_path"] = str(write_crosswalk(result, output))
             _print(result)
+            return 0
+        if args.command == "prepare-book-artifacts":
+            _print(
+                prepare_book_artifacts(
+                    config,
+                    args.source_id,
+                    write_mode=args.write_mode,
+                    max_chunk_chars=args.max_chunk_chars,
+                )
+            )
             return 0
         if args.command == "ingest-policies":
             client = Neo4jClient.from_config(config) if args.write_mode == "upsert" else None

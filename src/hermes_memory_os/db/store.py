@@ -360,6 +360,56 @@ class MemoryStore:
                 )
         return source_id, True
 
+    def get_source(self, source_id: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute("SELECT * FROM sources WHERE id=?", (source_id,)).fetchone()
+        return _source_from_row(row) if row is not None else None
+
+    def list_sources_by_path_prefix(self, prefix: str, *, status: str | None = "active") -> list[dict[str, Any]]:
+        """List sources whose source_path starts with prefix. Default: active only."""
+
+        with self.connection() as conn:
+            if status is None:
+                rows = conn.execute(
+                    "SELECT * FROM sources WHERE source_path LIKE ? ORDER BY ingested_at",
+                    (f"{prefix}%",),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM sources WHERE source_path LIKE ? AND status=? ORDER BY ingested_at",
+                    (f"{prefix}%", status),
+                ).fetchall()
+        return [_source_from_row(row) for row in rows]
+
+    def supersede_source(self, source_id: str, *, replaced_by: str, reason: str) -> bool:
+        """Mark an active source superseded. Does not delete chunks or Qdrant points.
+
+        Returns True only when an active row was updated. Retrieval already excludes
+        non-active sources.
+        """
+
+        if not source_id or not replaced_by or source_id == replaced_by:
+            return False
+        with self.connection() as conn:
+            row = conn.execute("SELECT metadata_json, status FROM sources WHERE id=?", (source_id,)).fetchone()
+            if row is None or row["status"] != "active":
+                return False
+            metadata = loads(row["metadata_json"], {}) or {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata.update(
+                {
+                    "superseded_by": replaced_by,
+                    "supersede_reason": reason,
+                    "superseded_at": now_iso(),
+                }
+            )
+            changed = conn.execute(
+                "UPDATE sources SET status='superseded', metadata_json=? WHERE id=? AND status='active'",
+                (dumps(metadata), source_id),
+            ).rowcount
+        return bool(changed)
+
     def list_chunks_needing_index(
         self,
         *,
@@ -874,6 +924,19 @@ def sanitize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 def _rank_to_score(rank: float) -> float:
     # SQLite bm25 is lower-is-better and often negative. This maps it to a compact positive score.
     return max(0.0, min(1.0, 1.0 / (1.0 + abs(rank))))
+
+
+def _source_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "source_type": row["source_type"],
+        "source_path": row["source_path"],
+        "ingested_at": row["ingested_at"],
+        "status": row["status"],
+        "content_hash": row["content_hash"],
+        "metadata": loads(row["metadata_json"], {}),
+    }
 
 
 def _source_chunk_from_row(row: sqlite3.Row) -> dict[str, Any]:

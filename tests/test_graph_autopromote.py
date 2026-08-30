@@ -34,6 +34,12 @@ def test_queued_promotion_validates_both_dry_runs_before_any_upsert(tmp_path, mo
     book = SimpleNamespace(concepts=("Finite Game",))
 
     monkeypatch.setattr(autopromote, "discover_book", lambda _vault, _source: book)
+    monkeypatch.setattr(autopromote, "embedding_input_limit", lambda _app: 6000)
+    monkeypatch.setattr(
+        autopromote,
+        "prepare_book_artifacts",
+        lambda *_args, **_kwargs: {"chunk_bodies_path": str(tmp_path / "chunk-bodies.json")},
+    )
     monkeypatch.setattr(
         autopromote,
         "validate_book_artifacts",

@@ -45,6 +45,7 @@ Don't use for: merging entities, rewriting notes, ingesting policies, promoting 
 - Low-confidence and unsupported graph facts are excluded by default.
 - `graph_policy_ingest` and `graph_review` return `not_activated` until their specs are reviewed.
 - Report paths must stay under the configured graph reports directory.
+- Only the checked-in crosswalk adapter may write graph crosswalk points or indexing state; embedding text must exactly equal its declared source span.
 
 ## Verification
 

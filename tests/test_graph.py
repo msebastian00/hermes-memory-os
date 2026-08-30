@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from hermes_memory_os.graph.builder import GraphBookBuilder, discover_book
+from hermes_memory_os.graph.artifact_prep import prepare_book_artifacts
 from hermes_memory_os.graph.config import GraphConfig
 from hermes_memory_os.graph.maintenance import collect_maintenance, write_maintenance_report
 from hermes_memory_os.graph.overlap import collect_overlap_review, concept_candidates, write_overlap_review_report
@@ -174,6 +175,29 @@ title: Book One
     artifact = discover_book(config.vault_root, "book-one")
 
     assert artifact.claims == ("A source claim with evidence",)
+
+
+def test_artifact_preparation_writes_exact_spans_idempotently(tmp_path):
+    config = _book_config(tmp_path)
+    _write(config.vault_root / "05_QUEUE/book-ingestion/incoming/book-one.md", "---\nsource_id: book-one\n---\n")
+    chunks_path = config.vault_root / "06_GENERATED/source-analysis/book-one/retrieval-chunks.md"
+    chunks_path.unlink()
+
+    planned = prepare_book_artifacts(config, "book-one", write_mode="dry_run", max_chunk_chars=1000)
+    assert planned["status"] == "planned"
+    assert not chunks_path.exists()
+
+    prepared = prepare_book_artifacts(config, "book-one", write_mode="upsert", max_chunk_chars=1000)
+    again = prepare_book_artifacts(config, "book-one", write_mode="upsert", max_chunk_chars=1000)
+    artifact = discover_book(config.vault_root, "book-one")
+    raw = (config.vault_root / "03_RESOURCES/books/raw/book-one.md").read_text(encoding="utf-8")
+    bodies = json.loads((chunks_path.parent / "chunk-bodies.json").read_text(encoding="utf-8"))
+
+    assert prepared["chunk_count"] == again["chunk_count"] == len(artifact.chunks)
+    assert all(raw[row["span_start"]:row["span_end"]] == row["text"] for row in bodies["chunks"])
+    assert all(len(row["text"]) <= 1000 for row in bodies["chunks"])
+
+
 def test_book_upsert_uses_stable_ids_without_duplicates(tmp_path):
     config = _book_config(tmp_path)
     client = _FakeNeo4j()

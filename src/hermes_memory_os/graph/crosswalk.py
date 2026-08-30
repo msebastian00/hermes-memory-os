@@ -10,6 +10,7 @@ from typing import Any
 from .builder import BookArtifacts, discover_book
 from .config import GraphConfig
 from .source_integrity import validate_book_artifacts
+from .artifact_prep import embedding_input_limit, prepare_book_artifacts
 
 
 class CrosswalkError(ValueError):
@@ -88,7 +89,25 @@ def index_book_crosswalk(
     """
     if write_mode not in {"dry_run", "upsert"}:
         raise CrosswalkError("write_mode must be dry_run or upsert")
+    limit = embedding_input_limit(memory_app)
+    if write_mode == "upsert":
+        prepared = prepare_book_artifacts(
+            config,
+            source_id,
+            write_mode="upsert",
+            max_chunk_chars=limit,
+            memory_app=memory_app,
+        )
+        chunk_bodies_path = Path(prepared["chunk_bodies_path"])
     plan = build_crosswalk_plan(config, source_id, chunk_bodies_path)
+    raw_text = plan["book"].raw_path.read_text(encoding="utf-8")
+    for item in plan["chunks"]:
+        if item["text"] != raw_text[item["span_start"] : item["span_end"]]:
+            raise CrosswalkError(f"chunk {item['external_id']} vector text is not the declared evidence span")
+        if len(item["text"]) > limit:
+            raise CrosswalkError(
+                f"chunk {item['external_id']} exceeds embedding input limit {limit}; prepare artifacts first"
+            )
     book: BookArtifacts = plan["book"]
     result = {
         "source_id": source_id,
@@ -108,7 +127,7 @@ def index_book_crosswalk(
     indexer = getattr(memory_app, "semantic_indexer", None)
     if indexer is None:
         raise CrosswalkError("Memory OS semantic indexing must be enabled for crosswalk upsert")
-    source_path = f"graph-crosswalk://{source_id}/{plan['raw_hash']}"
+    source_path = f"graph-crosswalk://{source_id}/{plan['raw_hash']}/{_chunkset_digest(plan['chunks'])}"
     chunks = [_memory_chunk(item, book, plan["raw_hash"]) for item in plan["chunks"]]
     memory_source_id, created = memory_app.store.upsert_source_file(
         source_path=source_path,
@@ -132,13 +151,27 @@ def index_book_crosswalk(
         raise CrosswalkError("Memory OS crosswalk source does not contain the expected verified chunks")
     indexing = indexer.index_source_chunks(list(by_external.values()))
     refreshed = {key: memory_app.store.get_source_chunk(value["id"]) for key, value in by_external.items()}
+    point_ids = {key: value.get("qdrant_point_id") for key, value in refreshed.items() if value}
+    complete = (not indexing["semantic_failed"]) and point_ids and all(point_ids.values())
+    superseded_ids: list[str] = []
+    if complete:
+        prefix = f"graph-crosswalk://{source_id}/"
+        for prior in memory_app.store.list_sources_by_path_prefix(prefix, status="active"):
+            if prior["id"] != memory_source_id:
+                if memory_app.store.supersede_source(
+                    prior["id"],
+                    replaced_by=memory_source_id,
+                    reason="replaced by complete graph-crosswalk",
+                ):
+                    superseded_ids.append(prior["id"])
     result.update(
         {
-            "status": "indexed" if not indexing["semantic_failed"] else "partially_indexed",
+            "status": "indexed" if complete else "partially_indexed",
             "memory_os_source_id": memory_source_id,
             "memory_os_source_created": created,
             "indexing": indexing,
-            "qdrant_point_ids": {key: value.get("qdrant_point_id") for key, value in refreshed.items() if value},
+            "qdrant_point_ids": point_ids,
+            "superseded_source_ids": superseded_ids,
         }
     )
     result["warnings"] = [
@@ -187,3 +220,8 @@ def _read_manifest(path: Path) -> dict[str, Any]:
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _chunkset_digest(chunks: list[dict[str, Any]]) -> str:
+    joined = "|".join(f"{item['external_id']}:{item['span_start']}:{item['span_end']}" for item in chunks)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]

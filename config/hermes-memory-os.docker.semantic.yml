@@ -26,6 +26,7 @@ embeddings:
   base_url: http://host.docker.internal:11434
   model: nomic-embed-text
   dimension: 768
+  max_input_chars: 6000
 
 retrieval:
   max_injected: 8

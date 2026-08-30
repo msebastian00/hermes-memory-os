@@ -57,7 +57,7 @@ A source in `05_QUEUE/book-ingestion/incoming`, `processing`, or `completed` is 
 
 A source must return `ready_for_span_review` from `validate-book-source` before crosswalk or Neo4j upsert. `book-finite-infinite-games-undated` is currently blocked by missing raw-source section markers; its dry-run is diagnostic only. Keep the original extract unchanged, register a complete corrected derivative, then regenerate reviewed chunks and rerun the preflight.
 
-Use `promote-queued-book` for an end-to-end promotion. It is idempotent and runs both dry validations before it creates Qdrant points or Neo4j records. The queue is authorization; a failed machine gate defers the source and writes a report.
+Use `promote-queued-book` for an end-to-end promotion. It is idempotent and runs both dry validations before it creates Qdrant points or Neo4j records. The queue is authorization; a failed machine gate defers the source and writes a report. Only the checked-in crosswalk adapter may write graph crosswalk points or indexing state; embedding text must exactly equal its declared source span.
 
 ## Concept-overlap review
 

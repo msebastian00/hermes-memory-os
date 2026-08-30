@@ -16,6 +16,7 @@ from .crosswalk import index_book_crosswalk, write_crosswalk
 from .maintenance import collect_maintenance, write_maintenance_report
 from .overlap import collect_overlap_review, concept_candidates, write_overlap_review_report
 from .source_integrity import validate_book_artifacts
+from .artifact_prep import embedding_input_limit, prepare_book_artifacts
 
 
 class AutoPromotionError(ValueError):
@@ -67,11 +68,22 @@ def promote_queued_book(
     if write_mode == "upsert" and getattr(memory_app, "semantic_indexer", None) is None:
         raise AutoPromotionError("Memory OS semantic indexing must be enabled before autonomous promotion")
 
+    limit = embedding_input_limit(memory_app)
+    prepared = prepare_book_artifacts(
+        config,
+        source_id,
+        write_mode=write_mode,
+        max_chunk_chars=limit,
+        memory_app=memory_app,
+    )
+    bodies_path = (chunk_bodies_path or default_chunk_bodies_path(config, source_id)).resolve()
+    if write_mode == "upsert":
+        bodies_path = Path(prepared["chunk_bodies_path"]).resolve()
+
     book = discover_book(config.vault_root, source_id)
     integrity = validate_book_artifacts(book)
     if not integrity["safe_for_qdrant_crosswalk"]:
         raise AutoPromotionError("source-integrity validation blocked promotion: " + ", ".join(integrity["problems"]))
-    bodies_path = (chunk_bodies_path or default_chunk_bodies_path(config, source_id)).resolve()
     if not bodies_path.is_file():
         raise AutoPromotionError(f"missing exact chunk-body manifest: {bodies_path}")
 
