@@ -31,6 +31,31 @@ set -a
 . /workspace/agent-dev/hermes-memory-os/.env.http.local
 set +a
 ```
+## Visual extraction
+
+Spark 1 is the primary local visual-semantic provider. The validated dedicated ConnectX path is:
+
+```bash
+export HERMES_GRAPH_VLM_BASE_URL=http://192.168.100.11:8002/v1
+export HERMES_GRAPH_VLM_MODEL=qwen36
+```
+
+This is an internal endpoint, not a credential. Keep it in the local service environment rather than a committed configuration file. The running server exposes `qwen36`; `qwen36-deep` is not currently registered. The adapter disables thinking so structured extraction has a usable completion budget.
+
+The adapter renders the requested PDF pages locally, preserves each rendered image hash and page number, and writes derived records only beneath `graph/reports/multimodal/`. It does not rewrite raw books, vault pages, Qdrant, or Memory OS. Run dry-run first:
+
+```bash
+cd /workspace/agent-dev/hermes-memory-os
+export PYTHONPATH=src
+hermes-graph --config config/hermes-graph.local.yml extract-visual-evidence \
+  --source-id <source-id> \
+  --pdf /absolute/path/to/book.pdf \
+  --first-page 1 --last-page 10 \
+  --write-mode dry_run
+```
+
+An upsert adds only existing `Evidence`, `Claim`, `SUPPORTS`, and `ABOUT` graph records. It requires an immutable attachment hash, page-to-reviewed-chunk mapping, extractor provenance, and confidence at or above `0.75`. Records that fail a machine gate remain in the report with warnings. Visual claims attach to the existing source chunk, so current Qdrant-first retrieval can expand to them through Neo4j.
+
 Hermes tools (Memory OS provider boundary):
 
 - `graph_retrieve` — Qdrant/Memory OS first, then optional graph expansion

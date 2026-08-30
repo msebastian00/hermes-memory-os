@@ -7,7 +7,7 @@ from typing import Any
 
 DEFAULT_MIN_CONFIDENCE = 0.75
 UNSUPPORTED_STATUSES = frozenset(
-    {"unsupported", "contradicted", "rejected", "stale", "draft", "unverified-unsupported"}
+    {"unsupported", "contradicted", "rejected", "stale", "superseded", "draft", "unverified-unsupported"}
 )
 
 

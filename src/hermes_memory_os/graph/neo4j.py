@@ -7,6 +7,8 @@ from typing import Any
 
 import requests
 
+from hermes_memory_os.utils import now_iso
+
 from .config import GraphConfig
 
 class Neo4jError(RuntimeError):
@@ -81,6 +83,44 @@ class Neo4jClient:
                     {"rows": batch},
                 )
         return {"nodes": len(nodes), "relationships": len(relationships)}
+
+    def supersede_visual_variants(self, records: list[dict[str, Any]]) -> dict[str, int]:
+        """Retire wording variants after an immutable visual artifact is reprocessed."""
+        superseded_evidence = 0
+        superseded_claims = 0
+        seen: set[tuple[str, int, str, str]] = set()
+        for record in records:
+            key = (
+                str(record["source_id"]),
+                int(record["page_number"]),
+                str(record["attachment_sha256"]),
+                str(record["evidence_id"]),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            rows = self.execute(
+                """
+                MATCH (e:Evidence {
+                    source_id: $source_id,
+                    page_number: $page_number,
+                    attachment_sha256: $attachment_sha256
+                })-[:SUPPORTS]->(c:Claim {claim_type: "visual_source_claim"})
+                WHERE e.id <> $evidence_id
+                SET e.status = "superseded",
+                    e.superseded_by = $evidence_id,
+                    e.updated_at = $updated_at,
+                    c.status = "superseded",
+                    c.superseded_by = $claim_id,
+                    c.updated_at = $updated_at
+                RETURN count(DISTINCT e) AS evidence, count(DISTINCT c) AS claims
+                """,
+                {**record, "updated_at": now_iso()},
+            )
+            if rows:
+                superseded_evidence += int(rows[0]["evidence"])
+                superseded_claims += int(rows[0]["claims"])
+        return {"evidence": superseded_evidence, "claims": superseded_claims}
 
     def expand_context(self, chunk_ids: list[str], qdrant_point_ids: list[str]) -> list[dict[str, Any]]:
         if not chunk_ids and not qdrant_point_ids:

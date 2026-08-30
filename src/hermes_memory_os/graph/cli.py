@@ -19,6 +19,7 @@ from .maintenance import collect_maintenance, write_maintenance_report
 from .source_integrity import validate_book_source, write_source_integrity_report
 from .neo4j import Neo4jClient
 from .schema import initialize_schema
+from .multimodal import extract_pdf_visual_evidence, visual_evidence_plan
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -50,6 +51,15 @@ def main(argv: list[str] | None = None) -> int:
     crosswalk.add_argument("--chunk-bodies", required=True, type=Path)
     crosswalk.add_argument("--write-mode", choices=("dry_run", "upsert"), default="dry_run")
     crosswalk.add_argument("--crosswalk-out", type=Path)
+    visual = sub.add_parser("extract-visual-evidence", help="Extract provenance-backed PDF visual evidence.")
+    visual.add_argument("--source-id", required=True)
+    visual.add_argument("--pdf", required=True, type=Path)
+    visual.add_argument("--write-mode", choices=("dry_run", "upsert"), default="dry_run")
+    visual.add_argument("--first-page", type=int, default=1)
+    visual.add_argument("--last-page", type=int)
+    visual.add_argument("--min-confidence", type=float, default=0.75)
+    visual.add_argument("--output", type=Path)
+
     maintenance = sub.add_parser("maintenance", help="Generate graph maintenance findings.")
 
     policies = sub.add_parser("ingest-policies", help="Plan or upsert authoritative policy sources.")
@@ -173,6 +183,52 @@ def main(argv: list[str] | None = None) -> int:
                 "review_warnings": review["review_warnings"],
                 "auto_merged": False,
             })
+            return 0
+        if args.command == "extract-visual-evidence":
+            integrity = validate_book_source(config, args.source_id)
+            if not integrity["safe_for_neo4j_book_upsert"]:
+                _print({
+                    "source_id": args.source_id,
+                    "write_mode": args.write_mode,
+                    "status": "deferred",
+                    "warnings": ["source_integrity_blocked:" + ",".join(integrity["problems"])],
+                    "source_integrity": integrity,
+                })
+                return 0
+            output = (args.output or config.reports_root / "multimodal" / args.source_id).resolve()
+            reports_root = config.reports_root.resolve()
+            if output != reports_root and reports_root not in output.parents:
+                raise ValueError("visual evidence output must stay under the graph reports directory")
+            extraction = extract_pdf_visual_evidence(
+                args.pdf.resolve(),
+                output,
+                first_page=args.first_page,
+                last_page=args.last_page,
+            )
+            plan = visual_evidence_plan(
+                config,
+                args.source_id,
+                extraction["records"],
+                min_confidence=args.min_confidence,
+            )
+            result = {
+                "source_id": args.source_id,
+                "write_mode": args.write_mode,
+                "status": "planned",
+                "pages_rendered": extraction["pages_rendered"],
+                "evidence_records": len(extraction["records"]),
+                "nodes": len(plan["nodes"]),
+                "relationships": len(plan["relationships"]),
+                "warnings": extraction["warnings"] + plan["warnings"],
+                "output_path": str(output),
+                "source_integrity": integrity,
+            }
+            if args.write_mode == "upsert":
+                client = Neo4jClient.from_config(config)
+                result["write_result"] = client.upsert(plan["nodes"], plan["relationships"])
+                result["superseded_variants"] = client.supersede_visual_variants(plan["visual_records"])
+                result["status"] = "upserted"
+            _print(result)
             return 0
         if args.command == "maintenance":
             findings = collect_maintenance(Neo4jClient.from_config(config), min_confidence=args.min_confidence)
