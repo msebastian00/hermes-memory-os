@@ -13,6 +13,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    networks:
+      default:
+      agent_platform:
+        aliases:
+          - neo4j
 
 volumes:
   hermes_graph_neo4j_data:
+
+networks:
+  agent_platform:
+    external: true
+    name: agent-platform_default
