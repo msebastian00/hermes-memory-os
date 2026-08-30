@@ -390,3 +390,29 @@ def _searchable_text(value: str, *, with_offsets: bool = False) -> str | tuple[s
         index += 1
     text = "".join(output)
     return (text, offsets) if with_offsets else text
+
+
+def visual_processing_enabled() -> bool:
+    """Require an explicit local switch before queued promotion invokes a VLM."""
+    return os.environ.get("HERMES_GRAPH_VISUAL_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"} and configured()
+
+
+def discover_book_pdf(book: Any, vault_root: Path) -> Path | None:
+    """Resolve an immutable PDF declared by a book manifest without moving it."""
+    from .builder import _read_frontmatter
+
+    manifest, _ = _read_frontmatter(book.manifest_path)
+    candidates = [
+        manifest.get("original_path"),
+        manifest.get("companion_pdf"),
+        manifest.get("pdf_path"),
+    ]
+    candidates.append(str(book.raw_path.with_suffix(".pdf").relative_to(vault_root)) if book.raw_path.with_suffix(".pdf").is_file() else None)
+    for value in candidates:
+        if not value:
+            continue
+        candidate_path = Path(str(value))
+        candidate = candidate_path.resolve() if candidate_path.is_absolute() else (vault_root / candidate_path).resolve()
+        if candidate.suffix.lower() == ".pdf" and candidate.is_file() and vault_root.resolve() in candidate.parents:
+            return candidate
+    return None

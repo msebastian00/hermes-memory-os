@@ -17,6 +17,7 @@ from .maintenance import collect_maintenance, write_maintenance_report
 from .overlap import collect_overlap_review, concept_candidates, write_overlap_review_report
 from .source_integrity import validate_book_artifacts
 from .artifact_prep import embedding_input_limit, prepare_book_artifacts
+from .multimodal import discover_book_pdf, extract_pdf_visual_evidence, visual_evidence_plan, visual_processing_enabled
 
 
 class AutoPromotionError(ValueError):
@@ -102,6 +103,8 @@ def promote_queued_book(
     overlap_path = config.reports_root / f"{source_id}-overlap-review.md"
     write_overlap_review_report(overlap, overlap_path)
 
+    visual_dry_run = _promote_visual_evidence(config, book, client=client, write_mode="dry_run")
+
     if write_mode == "dry_run":
         return {
             "status": "planned",
@@ -111,6 +114,7 @@ def promote_queued_book(
             "source_integrity": integrity,
             "crosswalk_dry_run": crosswalk_dry_run,
             "graph_dry_run": {key: value for key, value in graph_dry_run.items() if key != "plan"},
+            "visual_dry_run": visual_dry_run,
             "overlap_review": {
                 "path": str(overlap_path),
                 "status": overlap["status"],
@@ -132,6 +136,7 @@ def promote_queued_book(
         qdrant_crosswalk=dict(crosswalk["qdrant_point_ids"]),
         client=client,
     )
+    visual_upsert = _promote_visual_evidence(config, book, client=client, write_mode="upsert")
     maintenance = collect_maintenance(client, min_confidence=config.min_edge_confidence)
     maintenance_path = config.reports_root / "graph-maintenance.md"
     write_maintenance_report(maintenance, maintenance_path)
@@ -153,6 +158,8 @@ def promote_queued_book(
         },
         "crosswalk_path": str(crosswalk_path),
         "graph_upsert": {key: value for key, value in graph_upsert.items() if key != "plan"},
+        "visual_dry_run": visual_dry_run,
+        "visual_upsert": visual_upsert,
         "maintenance_path": str(maintenance_path),
         "maintenance_counts": {key: len(value) for key, value in maintenance.items()},
     }
@@ -217,3 +224,41 @@ def _actionable_queue_card(metadata: dict[str, Any]) -> bool:
         return False
     source_path = str(metadata.get("source_path") or "")
     return "/processed/" not in source_path
+
+
+def _promote_visual_evidence(
+    config: GraphConfig,
+    book: Any,
+    *,
+    client: Any,
+    write_mode: str,
+) -> dict[str, Any]:
+    """Run visual extraction as an additive, evidence-gated promotion step."""
+    if not visual_processing_enabled():
+        return {"status": "disabled", "reason": "HERMES_GRAPH_VISUAL_ENABLED or VLM endpoint is not configured"}
+    pdf_path = discover_book_pdf(book, config.vault_root)
+    if pdf_path is None:
+        return {"status": "not_applicable", "reason": "no manifest-declared immutable PDF"}
+    output = config.reports_root / "multimodal" / book.source_id
+    extraction = extract_pdf_visual_evidence(pdf_path, output)
+    plan = visual_evidence_plan(
+        config,
+        book.source_id,
+        extraction["records"],
+        min_confidence=config.min_edge_confidence,
+    )
+    result = {
+        "status": "planned",
+        "pdf_path": str(pdf_path),
+        "pages_rendered": extraction["pages_rendered"],
+        "evidence_records": len(extraction["records"]),
+        "nodes": len(plan["nodes"]),
+        "relationships": len(plan["relationships"]),
+        "warnings": extraction["warnings"] + plan["warnings"],
+        "output_path": str(output),
+    }
+    if write_mode == "upsert" and plan["nodes"]:
+        result["write_result"] = client.upsert(plan["nodes"], plan["relationships"])
+        result["superseded_variants"] = client.supersede_visual_variants(plan["visual_records"])
+        result["status"] = "upserted"
+    return result

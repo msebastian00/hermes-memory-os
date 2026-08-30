@@ -56,6 +56,8 @@ hermes-graph --config config/hermes-graph.local.yml extract-visual-evidence \
 
 An upsert adds only existing `Evidence`, `Claim`, `SUPPORTS`, and `ABOUT` graph records. It requires an immutable attachment hash, page-to-reviewed-chunk mapping, extractor provenance, and confidence at or above `0.75`. Records that fail a machine gate remain in the report with warnings. Visual claims attach to the existing source chunk, so current Qdrant-first retrieval can expand to them through Neo4j.
 
+Queued promotion invokes this path automatically when the non-committed local environment sets `HERMES_GRAPH_VISUAL_ENABLED=true`, `HERMES_GRAPH_VLM_BASE_URL`, and `HERMES_GRAPH_VLM_MODEL`. It resolves only a manifest-declared immutable PDF (`original_path`, `companion_pdf`, or `pdf_path`); a source without one is reported as `not_applicable` and its text promotion continues unchanged.
+
 Hermes tools (Memory OS provider boundary):
 
 - `graph_retrieve` — Qdrant/Memory OS first, then optional graph expansion

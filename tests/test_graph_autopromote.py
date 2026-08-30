@@ -92,3 +92,42 @@ def test_queued_promotion_validates_both_dry_runs_before_any_upsert(tmp_path, mo
     assert calls == ["crosswalk:dry_run", "graph:dry_run", "crosswalk:upsert", "graph:upsert"]
     assert result["authorization"] == "book-ingestion-queue"
     assert result["report_path"]
+
+
+def test_visual_promotion_uses_manifest_pdf_and_evidence_gates(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    book = SimpleNamespace(source_id="book-one")
+    calls = []
+
+    monkeypatch.setattr(autopromote, "visual_processing_enabled", lambda: True)
+    monkeypatch.setattr(autopromote, "discover_book_pdf", lambda *_args: tmp_path / "book.pdf")
+    monkeypatch.setattr(
+        autopromote,
+        "extract_pdf_visual_evidence",
+        lambda *_args: {"pages_rendered": 1, "records": [{"page_number": 1}], "warnings": []},
+    )
+    monkeypatch.setattr(
+        autopromote,
+        "visual_evidence_plan",
+        lambda *_args, **_kwargs: {
+            "nodes": [{"id": "claim"}],
+            "relationships": [{"id": "supports"}],
+            "visual_records": [{"evidence_id": "evidence"}],
+            "warnings": [],
+        },
+    )
+
+    class Client:
+        def upsert(self, nodes, relationships):
+            calls.append(("upsert", nodes, relationships))
+            return {"nodes": len(nodes), "relationships": len(relationships)}
+
+        def supersede_visual_variants(self, records):
+            calls.append(("supersede", records))
+            return {"claims": 0, "evidence": 0}
+
+    result = autopromote._promote_visual_evidence(config, book, client=Client(), write_mode="upsert")
+
+    assert result["status"] == "upserted"
+    assert result["pages_rendered"] == 1
+    assert [call[0] for call in calls] == ["upsert", "supersede"]
