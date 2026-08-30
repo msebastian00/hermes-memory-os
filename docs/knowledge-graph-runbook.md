@@ -18,10 +18,11 @@ Restart the Hermes session after changing the flag so plugin schemas reload.
 Hermes tools (Memory OS provider boundary):
 
 - `graph_retrieve` — Qdrant/Memory OS first, then optional graph expansion
-- `graph_build_book` — dry-run by default; upsert needs `human_approved=true`
+- `graph_build_book` — dry-run by default; upsert needs `human_approved=true` and an approved matching overlap-review report
+- `graph_review` — read-only Qdrant-first and Neo4j concept-overlap review; it writes only a report
 - `graph_maintenance` — read-only report under the graph reports directory
 
-`graph_policy_ingest` and `graph_review` are specified but not activated.
+`graph_policy_ingest` remains staged. `graph_review` is active and read-only.
 
 ## Operator CLI (same code path as the tools)
 
@@ -40,6 +41,18 @@ Allowed book sources are an explicit `graph.allowed_book_source_ids` list in the
 A source must return `ready_for_span_review` from `validate-book-source` before crosswalk or Neo4j upsert. `book-finite-infinite-games-undated` is currently blocked by missing raw-source section markers; its dry-run is diagnostic only. Keep the original extract unchanged, register a complete corrected derivative, then regenerate reviewed chunks and rerun the preflight.
 
 Do not run upsert from Hermes without an explicit `human_approved` tool parameter. Do not start Neo4j or schedule cron from the agent tools.
+
+## Concept-overlap review
+
+Run this after source synthesis and retrieval chunks exist, but before graph upsert:
+
+```bash
+hermes-graph --config config/hermes-graph.example.yml review-book-overlap \
+  --source-id <source-id> \
+  --memory-config <memory-os-config>
+```
+
+It reads Qdrant through the existing Memory OS semantic backend first, then Neo4j entity names/aliases and canonical vault concept pages/aliases. It writes only `graph/reports/<source-id>-overlap-review.md`. If `review_complete: false`, restore the unavailable service and rerun. A human must resolve candidates, set `status: approved`, and populate `approved_by` and `approved_at`; pass that report to `build-book --write-mode upsert --overlap-review <report>`. The review cannot merge or alias concepts.
 
 ## Health check
 

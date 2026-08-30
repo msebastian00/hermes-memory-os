@@ -180,6 +180,25 @@ class SemanticSearchBackend:
             )
         return sorted(results, key=lambda item: item.get("semantic_score", 0.0), reverse=True)[:limit]
 
+
+    def search_overlap_candidates(self, query: str, *, limit: int) -> list[dict[str, Any]]:
+        """Read both configured source and canonical-wiki collections for graph review."""
+
+        vector = self.embedder.embed(query)
+        results: list[dict[str, Any]] = []
+        collections = dict.fromkeys(
+            name for name in (self.collections.get("sources"), self.collections.get("wiki")) if name
+        )
+        for collection in collections:
+            results.extend(
+                self._search_collection(collection, vector, limit=limit, kind="source_chunk")
+            )
+        ranked = sorted(results, key=lambda item: item.get("semantic_score", 0.0), reverse=True)
+        unique: dict[tuple[str, str], dict[str, Any]] = {}
+        for item in ranked:
+            unique.setdefault((str(item.get("kind")), str(item.get("id"))), item)
+        return list(unique.values())[:limit]
+
     def _search_collection(
         self,
         collection: str,

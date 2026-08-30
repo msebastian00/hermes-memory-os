@@ -62,11 +62,23 @@ After reviewing the report and initializing Neo4j, write the same stable plan wi
 
 If an existing Qdrant point crosswalk becomes available, provide a JSON object from existing retrieval-chunk IDs to Qdrant point IDs. The builder never creates embeddings or Qdrant points.
 
+## Concept-overlap review
+
+Before a concept-bearing source is upserted, generate an overlap report using Qdrant-first candidate discovery and Neo4j entity/alias comparison:
+
+    hermes-graph --config config/hermes-graph.example.yml review-book-overlap --source-id <source-id> --memory-config <memory-os-config>
+
+The command writes only `graph/reports/<source-id>-overlap-review.md`. Restore both services and rerun if its frontmatter says `review_complete: false`. A human resolves candidate classifications in the report, then changes the frontmatter to `status: approved` and supplies `approved_by` and `approved_at`. The matching approved report is required for upsert:
+
+    hermes-graph --config config/hermes-graph.example.yml build-book --source-id <source-id> --write-mode upsert --overlap-review graph/reports/<source-id>-overlap-review.md
+
+This gate does not merge entities or create aliases. It blocks only graph promotion; normal raw-source preservation and non-graph ingestion remain unchanged.
+
 ## Retrieval and maintenance
 
 GraphRetrievalAdapter calls the Memory OS semantic backend first, then expands matching graph chunks through Neo4j. It returns a compact context packet with evidence, chunk IDs, Qdrant point IDs, and warnings. Unsupported and low-confidence graph facts are excluded by default.
 
-Hermes tools at the Memory OS provider boundary (`graph_retrieve`, `graph_build_book`, `graph_maintenance`) are gated by `HERMES_GRAPH_ENABLED=false` by default. See docs/knowledge-graph-runbook.md for enablement, rollback, and health checks. `graph_policy_ingest` and `graph_review` are specified but not activated.
+Graph retrieval expansion and graph upserts at the Memory OS provider boundary are gated by `HERMES_GRAPH_ENABLED=false` by default. The read-only `graph_review` tool may generate review artifacts while expansion is disabled. See docs/knowledge-graph-runbook.md for enablement, rollback, and health checks. `graph_policy_ingest` remains staged. `graph_review` is active, read-only, and requires human approval outside the tool before a graph upsert.
 
 Maintenance is additive and read-only against graph data. It reports duplicate entities, claims without evidence, low-confidence relationships, policy conflicts, and missing Qdrant crosswalks.
 

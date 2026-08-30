@@ -1,6 +1,6 @@
-# graph_review specification (staged, not activated)
+# graph_review specification
 
-Status: draft. Implement only after the policy adapter design is reviewed.
+Status: active read-only review gate. It does not perform resolution actions.
 
 ## Purpose
 
@@ -28,12 +28,8 @@ Each item must include status, confidence, candidates, evidence quotes, source/c
 
 ## Relationship to maintenance
 
-`graph_maintenance` is the read-only scanner. `graph_review` would format those findings as durable review items. Until activation, use `graph_maintenance` reports only.
+`graph_maintenance` scans graph hygiene. `graph_review` creates a source-specific overlap artifact by querying the Memory OS semantic backend (Qdrant) first, then Neo4j entity names/aliases and canonical vault concept pages/aliases.
 
-## Activation gate
+## Upsert gate
 
-1. Policy adapter spec reviewed.
-2. Tests prove no merge, no vault write, no Memory OS write.
-3. Human approval workflow for later merge actions is defined separately.
-
-Until then the dispatcher returns `status: not_activated` with `auto_merged=false`.
+A graph upsert requires a matching complete report under `graph/reports` with `review_complete: true`, `status: approved`, `approved_by`, and `approved_at` in frontmatter. Approval is human-only and authorizes only the matching graph upsert. It does not authorize aliases, merges, vault rewrites, or Memory OS promotion.

@@ -138,7 +138,7 @@ class _RecordingBuilder:
         self.config = config
         self.calls = []
 
-    def build(self, source_id, *, write_mode="dry_run", qdrant_crosswalk=None, client=None):
+    def build(self, source_id, *, write_mode="dry_run", qdrant_crosswalk=None, overlap_review_path=None, client=None):
         self.calls.append(
             {
                 "source_id": source_id,
@@ -439,15 +439,11 @@ def test_maintenance_writes_report_without_merging(tmp_path):
     assert result["counts"]["duplicate_entities"] == 1
 
 
-def test_policy_ingest_and_review_are_not_activated():
+def test_policy_ingest_remains_staged_and_review_is_exposed():
     ingest = dispatch_graph_tool("graph_policy_ingest", {"path": "04_SYSTEM/policies"})
-    review = dispatch_graph_tool("graph_review", {"kind": "duplicates"})
     assert ingest["status"] == "not_activated"
-    assert review["status"] == "not_activated"
-    assert review["auto_merged"] is False
-    assert review["promoted_to_vault"] is False
     names = {schema["name"] for schema in openai_graph_tool_schemas()}
-    assert names == {"graph_retrieve", "graph_build_book", "graph_maintenance"}
+    assert names == {"graph_retrieve", "graph_build_book", "graph_maintenance", "graph_review"}
 
 
 def test_provider_exposes_graph_tools_and_retrieve_degrades(tmp_path, monkeypatch):
@@ -457,7 +453,7 @@ def test_provider_exposes_graph_tools_and_retrieve_degrades(tmp_path, monkeypatc
     provider = HermesMemoryOSProvider()
     provider.initialize({"data_dir": str(tmp_path)})
     names = {schema["name"] for schema in provider.get_tool_schemas()}
-    assert {"graph_retrieve", "graph_build_book", "graph_maintenance"} <= names
+    assert {"graph_retrieve", "graph_build_book", "graph_maintenance", "graph_review"} <= names
     packet = provider.handle_tool_call("graph_retrieve", {"query": "anything"})
     assert packet["graph_enabled"] is False
     assert "graph_disabled" in packet["review_warnings"]

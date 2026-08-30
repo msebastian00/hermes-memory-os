@@ -209,3 +209,34 @@ def test_semantic_backend_hydrates_source_chunks_and_applies_source_type_filter(
             },
         }
     ]
+
+
+def test_overlap_review_query_reads_both_source_and_wiki_collections(tmp_path):
+    store = MemoryStore(tmp_path / "memory.sqlite")
+    store.init()
+    source_id, _ = store.upsert_source_file(
+        source_path="/sources/concept.md",
+        source_type="wiki",
+        title="Concept",
+        content="Canonical concept text.",
+        chunks=[{"text": "Canonical concept text."}],
+    )
+    with store.connection() as conn:
+        chunk_id = conn.execute(
+            "SELECT id FROM source_chunks WHERE source_id=?", (source_id,)
+        ).fetchone()["id"]
+    qdrant = SearchOnlyQdrant({"kind": "source_chunk", "chunk_id": chunk_id})
+    backend = SemanticSearchBackend(
+        store=store,
+        embedder=FakeEmbedder(),
+        qdrant=qdrant,
+        collections={"sources": "hermes_sources", "wiki": "hermes_wiki"},
+    )
+
+    results = backend.search_overlap_candidates("concept", limit=4)
+
+    assert results[0]["id"] == chunk_id
+    assert [call["collection"] for call in qdrant.calls] == [
+        "hermes_sources",
+        "hermes_wiki",
+    ]

@@ -5,6 +5,7 @@ from pathlib import Path
 from hermes_memory_os.graph.builder import GraphBookBuilder, discover_book
 from hermes_memory_os.graph.config import GraphConfig
 from hermes_memory_os.graph.maintenance import collect_maintenance, write_maintenance_report
+from hermes_memory_os.graph.overlap import collect_overlap_review, concept_candidates, write_overlap_review_report
 from hermes_memory_os.graph.retrieval import GraphRetrievalAdapter
 from hermes_memory_os.graph.schema import SCHEMA_STATEMENTS, initialize_schema
 
@@ -131,10 +132,20 @@ def test_book_upsert_uses_stable_ids_without_duplicates(tmp_path):
     client = _FakeNeo4j()
     builder = GraphBookBuilder(config)
 
-    first = builder.build("book-one", write_mode="upsert", client=client)
+    candidates = concept_candidates("book-one", ["Finite game", "Infinite game"])
+    review = collect_overlap_review(candidates, graph_client=None, memory_app=None)
+    review_path = write_overlap_review_report(review, config.reports_root / "book-one-overlap-review.md")
+    approved = review_path.read_text(encoding="utf-8")
+    approved = approved.replace("status: incomplete", "status: approved").replace("status: pending_human_review", "status: approved")
+    approved = approved.replace("review_complete: false", "review_complete: true")
+    approved = approved.replace("approved_by: null", "approved_by: Mike")
+    approved = approved.replace("approved_at: null", "approved_at: 2026-08-30T00:00:00Z")
+    review_path.write_text(approved, encoding="utf-8")
+
+    first = builder.build("book-one", write_mode="upsert", overlap_review_path=review_path, client=client)
     first_node_ids = set(client.nodes)
     first_relationship_ids = set(client.relationships)
-    second = builder.build("book-one", write_mode="upsert", client=client)
+    second = builder.build("book-one", write_mode="upsert", overlap_review_path=review_path, client=client)
 
     assert first["status"] == second["status"] == "upserted"
     assert set(client.nodes) == first_node_ids

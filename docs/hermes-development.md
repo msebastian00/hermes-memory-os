@@ -50,7 +50,7 @@ The provider exposes local durable memory through tool calls and prefetch:
 - `hermes_memory_search` returns hybrid FTS/Qdrant results with source labels and citations.
 - `prefetch` injects source-labeled local memory context for Hermes turns.
 - `sync_turn` persists raw provenance events after dropping blocked runtime metadata.
-- Optional graph tools (`graph_retrieve`, `graph_build_book`, `graph_maintenance`) are documented in `docs/knowledge-graph-runbook.md` and stay off unless `HERMES_GRAPH_ENABLED=true`.
+- Graph retrieval and graph upserts require `HERMES_GRAPH_ENABLED=true`. The read-only `graph_review` tool remains available to generate review artifacts without enabling graph expansion.
 
 Use `python -m hermes_memory_os.cli provider-smoke` from a Hermes workspace to verify import paths, memory add, prefetch, and turn sync.
 

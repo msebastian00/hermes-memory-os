@@ -15,6 +15,7 @@ from hermes_memory_os.utils import now_iso
 
 from .config import GraphConfig
 from .ids import claim_id, chunk_id, document_id, entity_id, evidence_id, relationship_id
+from .overlap import concept_candidates, validate_approved_overlap_review
 from .source_integrity import validate_book_artifacts
 
 
@@ -95,6 +96,7 @@ class GraphBookBuilder:
         *,
         write_mode: str = "dry_run",
         qdrant_crosswalk: dict[str, str] | None = None,
+        overlap_review_path: Path | None = None,
         client: Any | None = None,
     ) -> dict[str, Any]:
         if write_mode not in {"dry_run", "upsert"}:
@@ -105,6 +107,18 @@ class GraphBookBuilder:
             raise BookDiscoveryError(
                 "Book graph upsert blocked by source-integrity validation: "
                 + ", ".join(integrity["problems"])
+            )
+        if write_mode == "upsert":
+            if overlap_review_path is None:
+                raise ValueError("Graph upsert requires an approved overlap-review report.")
+            approved_review_path = overlap_review_path.resolve()
+            reports_root = self.config.reports_root.resolve()
+            if approved_review_path != reports_root and reports_root not in approved_review_path.parents:
+                raise ValueError("Overlap-review report must stay under the graph reports directory.")
+            validate_approved_overlap_review(
+                approved_review_path,
+                source_id=artifacts.source_id,
+                candidates=concept_candidates(artifacts.source_id, artifacts.concepts),
             )
         plan = _GraphPlan(self.extractor_name)
         if not integrity["safe_for_neo4j_book_upsert"]:

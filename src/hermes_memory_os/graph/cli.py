@@ -12,6 +12,7 @@ from .builder import GraphBookBuilder, discover_book
 from .config import GraphConfig, GraphConfigError
 from .crosswalk import index_book_crosswalk, write_crosswalk
 from .policy import GraphPolicyBuilder
+from .overlap import concept_candidates, collect_overlap_review, write_overlap_review_report
 from .maintenance import collect_maintenance, write_maintenance_report
 from .source_integrity import validate_book_source, write_source_integrity_report
 from .neo4j import Neo4jClient
@@ -37,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--source-id", required=True)
     build.add_argument("--write-mode", choices=("dry_run", "upsert"))
     build.add_argument("--qdrant-crosswalk", type=Path)
+    build.add_argument("--overlap-review", type=Path, help="Approved graph-overlap-review report required for upsert.")
     build.add_argument("--report-out", type=Path)
 
 
@@ -53,6 +55,12 @@ def main(argv: list[str] | None = None) -> int:
     policies.add_argument("--policy-path", action="append", type=Path)
     policies.add_argument("--write-mode", choices=("dry_run", "upsert"), default="dry_run")
     policies.add_argument("--report-out", type=Path)
+
+    review = sub.add_parser("review-book-overlap", help="Create a read-only concept-overlap review report.")
+    review.add_argument("--source-id", required=True)
+    review.add_argument("--memory-config", type=Path, help="Memory OS config used for Qdrant semantic review.")
+    review.add_argument("--data-dir", type=Path)
+    review.add_argument("--output", type=Path)
 
     maintenance.add_argument("--output", type=Path)
     maintenance.add_argument("--min-confidence", type=float, default=0.75)
@@ -90,17 +98,47 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "build-book":
             write_mode = args.write_mode or config.default_write_mode
             crosswalk = _load_crosswalk(args.qdrant_crosswalk)
+            overlap_review_path = args.overlap_review
             client = Neo4jClient.from_config(config) if write_mode == "upsert" else None
             result = GraphBookBuilder(config).build(
                 args.source_id,
                 write_mode=write_mode,
                 qdrant_crosswalk=crosswalk,
+                overlap_review_path=overlap_review_path,
                 client=client,
             )
             if args.report_out:
                 args.report_out.parent.mkdir(parents=True, exist_ok=True)
                 args.report_out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             _print({key: value for key, value in result.items() if key != "plan"})
+            return 0
+        if args.command == "review-book-overlap":
+            artifact = discover_book(config.vault_root, args.source_id)
+            app = (
+                MemoryApp.from_config(config_path=args.memory_config, data_dir=args.data_dir)
+                if args.memory_config
+                else None
+            )
+            review = collect_overlap_review(
+                concept_candidates(artifact.source_id, artifact.concepts),
+                graph_client=Neo4jClient.from_config(config),
+                memory_app=app,
+                vault_root=config.vault_root,
+            )
+            output = args.output or config.reports_root / f"{args.source_id}-overlap-review.md"
+            output = output.resolve()
+            reports_root = config.reports_root.resolve()
+            if output != reports_root and reports_root not in output.parents:
+                raise ValueError("review output must stay under the graph reports directory")
+            write_overlap_review_report(review, output)
+            _print({
+                "status": review["status"],
+                "output_path": str(output),
+                "candidate_digest": review["candidate_digest"],
+                "counts": review["counts"],
+                "review_warnings": review["review_warnings"],
+                "auto_merged": False,
+            })
             return 0
         if args.command == "maintenance":
             findings = collect_maintenance(Neo4jClient.from_config(config), min_confidence=args.min_confidence)

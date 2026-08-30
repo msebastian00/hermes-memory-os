@@ -8,10 +8,11 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
-from .builder import GraphBookBuilder
+from .builder import GraphBookBuilder, discover_book
 from .config import GraphConfig, GraphConfigError
 from .flags import GRAPH_CONFIG_ENV, graph_enabled, truthy
 from .maintenance import collect_maintenance, write_maintenance_report
+from .overlap import concept_candidates, collect_overlap_review, write_overlap_review_report
 from .neo4j import Neo4jClient
 from .retrieval import DEFAULT_MIN_CONFIDENCE, GraphRetrievalAdapter
 
@@ -90,6 +91,10 @@ def openai_graph_tool_schemas() -> list[dict[str, Any]]:
                         "type": "string",
                         "description": "Optional JSON map of source chunk IDs to existing Qdrant point IDs",
                     },
+                    "overlap_review_path": {
+                        "type": "string",
+                        "description": "Required for upsert: approved graph-overlap-review report under graph reports.",
+                    },
                     "report_out": {
                         "type": "string",
                         "description": "Optional report path; must stay under the graph reports directory",
@@ -119,6 +124,32 @@ def openai_graph_tool_schemas() -> list[dict[str, Any]]:
                     },
                 },
             },
+        },
+        {
+            "name": "graph_review",
+            "description": (
+                "Read-only concept-overlap review. Queries Memory OS/Qdrant first, then Neo4j entity names and aliases. "
+                "Writes a review report only; it never merges entities or rewrites vault, Qdrant, Neo4j, or Memory OS data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_id": {"type": "string", "description": "Optional already-ingested source ID; derives concept candidates from its source synthesis."},
+                    "candidates": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source_id": {"type": "string"},
+                                "canonical_name": {"type": "string"},
+                                "entity_type": {"type": "string", "default": "concept"}
+                            },
+                            "required": ["source_id", "canonical_name"]
+                        }
+                    },
+                    "output": {"type": "string", "description": "Optional report path under the graph reports directory."}
+                }
+            }
         },
     ]
 
@@ -177,7 +208,14 @@ def dispatch_graph_tool(
     if name == "graph_policy_ingest":
         return handle_graph_policy_ingest(arguments, environ=environ)
     if name == "graph_review":
-        return handle_graph_review(arguments, environ=environ)
+        return handle_graph_review(
+            arguments,
+            memory_app=memory_app,
+            graph_client=graph_client,
+            config_path=config_path,
+            environ=environ,
+            neo4j_client_factory=neo4j_client_factory,
+        )
     raise ValueError(f"Unknown graph tool: {name}")
 
 
@@ -311,6 +349,7 @@ def handle_graph_build_book(
             source_id,
             write_mode=write_mode,
             qdrant_crosswalk=crosswalk,
+            overlap_review_path=Path(str(arguments["overlap_review_path"])) if arguments.get("overlap_review_path") else None,
             client=client,
         )
     except Exception as exc:
@@ -418,21 +457,70 @@ def handle_graph_policy_ingest(arguments: dict[str, Any], *, environ: dict[str, 
     }
 
 
-def handle_graph_review(arguments: dict[str, Any], *, environ: dict[str, str] | None = None) -> dict[str, Any]:
-    _log_action("graph_review", [], "none", [REVIEW_STATUS], {})
-    return {
-        "status": REVIEW_STATUS,
-        "error": (
-            "graph_review is staged only until the policy adapter design is reviewed. "
-            "See docs/graph-review-spec.md. Never merge entities or promote graph "
-            "material into vault canon or Memory OS."
-        ),
-        "write_mode": "none",
-        "review_warnings": ["graph_review_not_activated"],
+def handle_graph_review(
+    arguments: dict[str, Any],
+    *,
+    memory_app: Any = None,
+    graph_client: Any = None,
+    config_path: str | Path | None = None,
+    environ: dict[str, str] | None = None,
+    neo4j_client_factory: Callable[[GraphConfig], Any] | None = None,
+) -> dict[str, Any]:
+    try:
+        config = load_graph_config(config_path, environ)
+    except (GraphConfigError, OSError) as exc:
+        return _error(str(exc), action="graph_review", write_mode="read")
+
+    source_id = str(arguments.get("source_id") or "").strip()
+    candidates = list(arguments.get("candidates") or [])
+    if source_id:
+        try:
+            artifact = discover_book(config.vault_root, source_id)
+        except Exception as exc:
+            return _error(
+                f"Unable to discover source for graph review: {exc}",
+                action="graph_review",
+                source_ids=[source_id],
+                write_mode="read",
+            )
+        candidates.extend(concept_candidates(artifact.source_id, artifact.concepts))
+    if not candidates:
+        return _error(
+            "graph_review requires source_id or candidates", action="graph_review", write_mode="read"
+        )
+
+    client = graph_client
+    warnings: list[str] = []
+    if client is None:
+        client, warnings = _try_graph_client(
+            config_path, environ, neo4j_client_factory, config=config
+        )
+    review = collect_overlap_review(
+        candidates, graph_client=client, memory_app=memory_app, vault_root=config.vault_root
+    )
+    review["review_warnings"] = list(dict.fromkeys(warnings + review["review_warnings"]))
+    source_ids = sorted({str(item.get("source_id") or "") for item in review["candidates"] if item.get("source_id")})
+    try:
+        default_name = f"{source_id or 'concepts'}-overlap-review.md"
+        output = _safe_report_path(config, arguments.get("output"), default_name)
+        write_overlap_review_report(review, output)
+    except ValueError as exc:
+        return _error(str(exc), action="graph_review", source_ids=source_ids, write_mode="read")
+
+    result = {
+        "status": review["status"],
+        "write_mode": "read",
+        "output_path": str(output),
+        "candidate_digest": review["candidate_digest"],
+        "counts": review["counts"],
+        "review_warnings": review["review_warnings"],
         "auto_merged": False,
+        "notes_rewritten": False,
         "promoted_to_vault": False,
         "promoted_to_memory_os": False,
     }
+    _log_action("graph_review", source_ids, "read", result["review_warnings"], result["counts"])
+    return result
 
 
 def load_graph_config(config_path: str | Path | None = None, environ: dict[str, str] | None = None) -> GraphConfig:

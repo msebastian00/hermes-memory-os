@@ -15,6 +15,7 @@ POLICY = VAULT / "04_SYSTEM/policies/HERMES_KNOWLEDGE_GRAPH_POLICY.md"
 ROUTER = VAULT / "04_SYSTEM/policies/POLICY_ROUTER.md"
 BOOK_POLICY = VAULT / "04_SYSTEM/policies/book-and-longform-knowledge-ingestion-policy.md"
 SOURCE_INTEGRITY_POLICY = VAULT / "04_SYSTEM/policies/HERMES_SOURCE_INTEGRITY_POLICY.md"
+ENTITY_RESOLUTION_POLICY = VAULT / "04_SYSTEM/policies/entity-resolution-policy.md"
 ROOT = Path(__file__).resolve().parents[1]
 JOB = ROOT / "cron/graph-maintenance.job.json"
 SCRIPT = ROOT / "scripts/graph_maintenance_cron.sh"
@@ -78,6 +79,22 @@ def test_source_integrity_policy_blocks_unverified_source_writes():
         "Book-ingestion jobs MUST invoke the preflight",
     ):
         assert required in text
+
+
+@pytest.mark.skipif(not ENTITY_RESOLUTION_POLICY.is_file(), reason="vault policy not mounted")
+def test_entity_resolution_policy_requires_read_only_overlap_review():
+    text = ENTITY_RESOLUTION_POLICY.read_text(encoding="utf-8")
+    for required in (
+        "Qdrant",
+        "same_concept",
+        "broader_or_narrower",
+        "related_but_distinct",
+        "uncertain",
+        "MUST NOT automatically merge",
+        "matching overlap-review report",
+    ):
+        assert required in text
+    assert "entity-resolution-policy.md" in ROUTER.read_text(encoding="utf-8")
 
 
 def test_maintenance_job_template_is_read_only_after_evening_cos():
