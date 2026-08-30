@@ -152,6 +152,28 @@ def test_book_discovery_accepts_legacy_manifest_identity_and_source_path(tmp_pat
     assert artifact.authors == ("Author One",)
 
 
+
+
+def test_book_discovery_accepts_structured_claim_table(tmp_path):
+    config = _book_config(tmp_path)
+    source = config.vault_root / "02_WIKI/sources/books/book-one.md"
+    source.write_text(
+        """---
+source_id: book-one
+title: Book One
+---
+## Claims, evidence, and limitations
+
+| Claim | Claim basis | Evidence supplied |
+|---|---|---|
+| A source claim with evidence | author claim | chapter 1 |
+""",
+        encoding="utf-8",
+    )
+
+    artifact = discover_book(config.vault_root, "book-one")
+
+    assert artifact.claims == ("A source claim with evidence",)
 def test_book_upsert_uses_stable_ids_without_duplicates(tmp_path):
     config = _book_config(tmp_path)
     client = _FakeNeo4j()

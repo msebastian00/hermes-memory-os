@@ -478,10 +478,23 @@ def _parse_retrieval_chunks(path: Path) -> list[dict[str, Any]]:
 
 
 def _parse_claims(body: str) -> list[str]:
-    match = re.search(r"### Claims\s*\n(.*?)(?=\n### |\Z)", body, flags=re.DOTALL)
-    if match is None:
+    numbered = re.search(r"### Claims\s*\n(.*?)(?=\n### |\Z)", body, flags=re.DOTALL)
+    if numbered is not None:
+        claims = [item.strip() for item in re.findall(r"^\d+\.\s+(.+)$", numbered.group(1), flags=re.MULTILINE)]
+        if claims:
+            return claims
+
+    table = re.search(r"^## Claims[^\n]*\n(?:\s*\n)*(?P<rows>(?:\|.*\n)+)", body, flags=re.IGNORECASE | re.MULTILINE)
+    if table is None:
         return []
-    return [item.strip() for item in re.findall(r"^\d+\.\s+(.+)$", match.group(1), flags=re.MULTILINE)]
+    claims: list[str] = []
+    for row in table.group("rows").splitlines():
+        cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+        if not cells or cells[0].lower() == "claim" or set(cells[0]) <= {"-", ":"}:
+            continue
+        if cells[0]:
+            claims.append(cells[0])
+    return claims
 
 
 def _matching_chunks(concept: str, chunks: tuple[dict[str, Any], ...], graph_ids: list[str]) -> list[str]:
