@@ -144,6 +144,8 @@ class GraphBookBuilder:
                 "created_at": created_at,
                 "updated_at": created_at,
                 "source_authority": "primary",
+                # A successful upsert is source-integrity gated before this plan is written.
+                "graph_status": "active",
                 "vault_path": _relative(self.config.vault_root, book.raw_path),
             },
         )

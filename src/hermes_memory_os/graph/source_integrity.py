@@ -33,14 +33,25 @@ def validate_book_artifacts(book: Any) -> dict[str, Any]:
     markers = _section_markers(text)
     observed = sorted(set(markers))
     missing = sorted(expected - set(observed))
+    span_coverage_complete = _exact_span_coverage(book, len(text))
+    section_markers_unreliable = _section_markers_unreliable(book)
     first_expected = min(expected) if expected else None
     first_observed = observed[0] if observed else None
     problems = []
+    warnings = []
     if actual_hash != book.checksum:
         problems.append("raw_source_hash_mismatch")
     if missing:
-        problems.append("section_markers_incomplete")
-    if first_expected is not None and first_observed is not None and first_observed > first_expected:
+        if span_coverage_complete and section_markers_unreliable:
+            warnings.append("section_markers_unverified_but_exact_spans_cover_source")
+        else:
+            problems.append("section_markers_incomplete")
+    if (
+        first_expected is not None
+        and first_observed is not None
+        and first_observed > first_expected
+        and not span_coverage_complete
+    ):
         problems.append("source_begins_after_expected_first_section")
     status = "ready_for_span_review" if not problems else "blocked"
     return {
@@ -57,7 +68,10 @@ def validate_book_artifacts(book: Any) -> dict[str, Any]:
         "observed_marker_min": first_observed,
         "observed_marker_max": max(observed) if observed else None,
         "missing_sections": missing,
+        "span_coverage_complete": span_coverage_complete,
+        "section_markers_unreliable": section_markers_unreliable,
         "problems": problems,
+        "warnings": warnings,
         "generated_at": now_iso(),
         "safe_for_qdrant_crosswalk": status == "ready_for_span_review",
         "safe_for_neo4j_book_upsert": status == "ready_for_span_review",
@@ -109,3 +123,32 @@ def _expected_sections(book: Any) -> set[int]:
         if count > 0:
             return set(range(1, count + 1))
     return _chunk_expected_sections(book.chunks)
+
+
+def _exact_span_coverage(book: Any, text_length: int) -> bool:
+    """Accept only contiguous retrieval spans that cover the immutable source exactly."""
+    spans: list[tuple[int, int]] = []
+    for chunk in book.chunks:
+        start, end = chunk.get("span_start"), chunk.get("span_end")
+        if not isinstance(start, int) or not isinstance(end, int) or start < 0 or end < start:
+            return False
+        spans.append((start, end))
+    if not spans:
+        return False
+    cursor = 0
+    for start, end in sorted(spans):
+        if start != cursor:
+            return False
+        cursor = end
+    return cursor == text_length
+
+
+def _section_markers_unreliable(book: Any) -> bool:
+    """Require an explicit immutable-manifest declaration before using span fallback."""
+    manifest_text = book.manifest_path.read_text(encoding="utf-8")
+    return bool(
+        re.search(
+            r"(?im)^\s*section_marker_reliability\s*:\s*unreliable\s*$",
+            manifest_text,
+        )
+    )
