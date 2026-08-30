@@ -322,6 +322,37 @@ def test_retrieval_excludes_low_confidence_and_unsupported_graph_facts():
     assert any("excluded_unsupported_or_low_confidence" in item for item in packet["review_warnings"])
 
 
+
+def test_retrieval_ranks_document_expansion_claims_by_query_relevance():
+    class Store:
+        def get_source_chunk(self, _):
+            return {"id": "memory-chunk", "qdrant_point_id": "point-1"}
+
+    class Semantic:
+        def search(self, query, *, limit):
+            return [{"id": "memory-chunk", "kind": "source_chunk", "semantic_score": 0.9, "text": query}]
+
+    class Retriever:
+        semantic_backend = Semantic()
+
+        def search(self, *args, **kwargs):
+            return []
+
+    class App:
+        store = Store()
+        retriever = Retriever()
+
+    class Graph:
+        def expand_context(self, *_args):
+            return [
+                {"claim_id": "generic", "claim_text": "A generic source claim.", "claim_confidence": 0.78, "claim_status": "active", "evidence_id": "e1", "evidence_quote": "generic"},
+                {"claim_id": "life", "claim_text": "Life design is an iterative practice.", "claim_confidence": 0.78, "claim_status": "active", "evidence_id": "e2", "evidence_quote": "life"},
+            ]
+
+    packet = GraphRetrievalAdapter(App(), Graph()).retrieve("life design")
+    assert [claim["id"] for claim in packet["claims"]] == ["life", "generic"]
+
+
 def test_retrieval_skips_graph_when_client_is_missing():
     class Retriever:
         semantic_backend = None

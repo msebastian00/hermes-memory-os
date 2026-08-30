@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 DEFAULT_MIN_CONFIDENCE = 0.75
@@ -60,6 +61,8 @@ class GraphRetrievalAdapter:
                 excluded += 1
         if excluded:
             warnings.append(f"excluded_unsupported_or_low_confidence:{excluded}")
+
+        supported_rows.sort(key=lambda row: _claim_relevance(query, row), reverse=True)
 
         claims = _unique(supported_rows, "claim_id")
         provenance = [
@@ -162,3 +165,16 @@ def _unique(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
             }
         )
     return result
+
+
+def _claim_relevance(query: str, row: dict[str, Any]) -> tuple[int, float]:
+    """Prefer claims that directly address the original Qdrant query."""
+
+    query_terms = set(re.findall(r"[a-z0-9]+", query.lower()))
+    claim_terms = set(re.findall(r"[a-z0-9]+", str(row.get("claim_text") or "").lower()))
+    confidence = row.get("claim_confidence")
+    try:
+        numeric_confidence = float(confidence) if confidence is not None else 0.0
+    except (TypeError, ValueError):
+        numeric_confidence = 0.0
+    return len(query_terms & claim_terms), numeric_confidence

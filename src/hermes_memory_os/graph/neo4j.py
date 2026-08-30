@@ -82,13 +82,17 @@ class Neo4jClient:
             return []
         return self.execute(
             """
-            MATCH (chunk:Chunk)
-            WHERE chunk.id IN $chunk_ids OR chunk.qdrant_point_id IN $qdrant_point_ids
-            OPTIONAL MATCH (chunk)-[:SUPPORTS]->(claim:Claim)
+            MATCH (seed:Chunk)
+            WHERE seed.id IN $chunk_ids OR seed.qdrant_point_id IN $qdrant_point_ids
+            OPTIONAL MATCH (seed)<-[:HAS_CHUNK]-(document:Document)-[:HAS_CHUNK]->(claim_chunk:Chunk)
+            OPTIONAL MATCH (claim_chunk)-[:SUPPORTS]->(claim:Claim)
             OPTIONAL MATCH (evidence:Evidence)-[:SUPPORTS]->(claim)
+            WHERE evidence.chunk_id = claim_chunk.id
             OPTIONAL MATCH (claim)-[:ABOUT]->(entity:Entity)
-            RETURN chunk.id AS chunk_id, chunk.qdrant_point_id AS qdrant_point_id,
-                   chunk.source_id AS source_id, chunk.source_chunk_id AS source_chunk_id,
+            WITH claim_chunk, claim, evidence, entity,
+                 collect(DISTINCT seed.qdrant_point_id)[0] AS qdrant_point_id
+            RETURN claim_chunk.id AS chunk_id, qdrant_point_id,
+                   claim_chunk.source_id AS source_id, claim_chunk.source_chunk_id AS source_chunk_id,
                    claim.id AS claim_id, claim.claim_text AS claim_text,
                    claim.confidence AS claim_confidence, claim.status AS claim_status,
                    claim.claim_basis AS claim_basis, claim.verification_status AS verification_status,
