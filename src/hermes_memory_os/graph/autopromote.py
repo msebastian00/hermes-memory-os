@@ -30,6 +30,8 @@ def queued_book_source_ids(vault_root: Path) -> list[str]:
     for state in ("incoming", "processing", "completed"):
         for path in sorted((queue_root / state).glob("*.md")):
             metadata = _frontmatter(path)
+            if not _actionable_queue_card(metadata):
+                continue
             source_id = str(metadata.get("source_id") or "").strip()
             if source_id:
                 source_ids.add(source_id)
@@ -192,3 +194,14 @@ def _frontmatter(path: Path) -> dict[str, Any]:
         return {}
     parsed = yaml.safe_load(head) or {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _actionable_queue_card(metadata: dict[str, Any]) -> bool:
+    """Exclude explicitly superseded and cleanup-only cards from autonomous promotion."""
+
+    if str(metadata.get("superseded_by") or "").strip():
+        return False
+    if str(metadata.get("cleanup_note") or "").strip():
+        return False
+    source_path = str(metadata.get("source_path") or "")
+    return "/processed/" not in source_path

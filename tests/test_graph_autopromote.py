@@ -11,6 +11,23 @@ def _config(tmp_path):
     return SimpleNamespace(vault_root=vault, reports_root=tmp_path / "reports", min_edge_confidence=0.75)
 
 
+
+
+def test_queued_source_ids_exclude_superseded_and_cleanup_cards(tmp_path):
+    config = _config(tmp_path)
+    queue = config.vault_root / "05_QUEUE" / "book-ingestion" / "completed"
+    queue.mkdir(parents=True)
+    (queue / "superseded.md").write_text(
+        "---\nsource_id: old-book\nsuperseded_by: completed/new-book.md\n---\n",
+        encoding="utf-8",
+    )
+    (queue / "cleanup.md").write_text(
+        "---\nsource_id: generated-note\ncleanup_note: not a book\n---\n",
+        encoding="utf-8",
+    )
+    (queue / "active.md").write_text("---\nsource_id: book-two\n---\n", encoding="utf-8")
+
+    assert autopromote.queued_book_source_ids(config.vault_root) == ["book-one", "book-two"]
 def test_queued_promotion_validates_both_dry_runs_before_any_upsert(tmp_path, monkeypatch):
     config = _config(tmp_path)
     calls = []
