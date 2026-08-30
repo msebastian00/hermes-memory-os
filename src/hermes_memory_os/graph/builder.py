@@ -43,7 +43,7 @@ def discover_book(vault_root: Path, source_id: str) -> BookArtifacts:
     synthesis_frontmatter, synthesis_body = _read_frontmatter(source_page)
     raw_manifest = _find_manifest(vault_root, source_id)
     manifest, _ = _read_frontmatter(raw_manifest)
-    raw_relative_path = str(manifest.get("source_path") or "")
+    raw_relative_path = str(manifest.get("source_path") or manifest.get("original_path") or "")
     raw_path = vault_root / raw_relative_path
     if not raw_relative_path or not raw_path.is_file():
         raise BookDiscoveryError(f"Missing immutable raw source for {source_id}: {raw_path}")
@@ -59,7 +59,7 @@ def discover_book(vault_root: Path, source_id: str) -> BookArtifacts:
             raise BookDiscoveryError(f"Chunk metadata is missing required field: {required}")
 
     title = str(synthesis_frontmatter.get("title") or manifest.get("title") or source_id)
-    authors = tuple(str(item) for item in synthesis_frontmatter.get("authors") or manifest.get("authors") or [])
+    authors = _authors(synthesis_frontmatter.get("authors") or manifest.get("authors") or manifest.get("author"))
     concepts = tuple(str(item) for item in synthesis_frontmatter.get("key_concepts") or [])
     claims = tuple(_parse_claims(synthesis_body))
     if not claims:
@@ -415,7 +415,7 @@ def _find_source_page(vault_root: Path, source_id: str) -> Path:
             frontmatter, _ = _read_frontmatter(candidate)
         except (OSError, yaml.YAMLError):
             continue
-        if frontmatter.get("source_id") == source_id:
+        if _source_id(frontmatter) == source_id:
             return candidate
     raise BookDiscoveryError(f"No canonical source page for {source_id}")
 
@@ -427,7 +427,7 @@ def _find_manifest(vault_root: Path, source_id: str) -> Path:
             frontmatter, _ = _read_frontmatter(candidate)
         except (PermissionError, yaml.YAMLError):
             continue
-        if frontmatter.get("source_id") == source_id:
+        if _source_id(frontmatter) == source_id:
             return candidate
     raise BookDiscoveryError(f"No source manifest for {source_id} under {raw_root}")
 
@@ -435,7 +435,7 @@ def _find_manifest(vault_root: Path, source_id: str) -> Path:
 def _read_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---\n"):
-        return {}, text
+        return _loose_frontmatter(text), text
     _, raw, body = text.split("---", 2)
     try:
         return yaml.safe_load(raw) or {}, body
@@ -453,6 +453,20 @@ def _loose_frontmatter(raw: str) -> dict[str, Any]:
             values[key.strip()] = value.strip()
     return values
 
+
+
+def _source_id(frontmatter: dict[str, Any]) -> str:
+    """Read current and legacy source identities without mutating vault metadata."""
+
+    return str(frontmatter.get("source_id") or frontmatter.get("id") or "").strip()
+
+
+def _authors(value: Any) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item) for item in value if str(item).strip())
+    if value is None:
+        return ()
+    return (str(value),)
 
 def _parse_retrieval_chunks(path: Path) -> list[dict[str, Any]]:
     text = path.read_text(encoding="utf-8")

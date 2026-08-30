@@ -128,7 +128,7 @@ def _has_reviewed_source_page(vault_root: Path, source_id: str) -> bool:
             frontmatter, _ = _read_frontmatter(candidate)
         except (PermissionError, OSError, yaml.YAMLError):
             continue
-        if frontmatter.get("source_id") == source_id:
+        if _source_id(frontmatter) == source_id:
             return True
     return False
 
@@ -142,7 +142,7 @@ def _find_manifest(vault_root: Path, source_id: str) -> Path | None:
             frontmatter, _ = _read_frontmatter(candidate)
         except (PermissionError, OSError, yaml.YAMLError):
             continue
-        if frontmatter.get("source_id") == source_id:
+        if _source_id(frontmatter) == source_id:
             return candidate
     return None
 
@@ -150,7 +150,7 @@ def _find_manifest(vault_root: Path, source_id: str) -> Path | None:
 def _read_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---\n"):
-        return {}, text
+        return _loose_frontmatter(text), text
     _, raw, body = text.split("---", 2)
     try:
         loaded = yaml.safe_load(raw) or {}
@@ -166,6 +166,21 @@ def _read_frontmatter(path: Path) -> tuple[dict[str, Any], str]:
         return values, body
 
 
+
+def _loose_frontmatter(raw: str) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for line in raw.splitlines():
+        if not line or line.startswith((" ", "-")) or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        if key.strip():
+            values[key.strip()] = value.strip()
+    return values
+
+
+def _source_id(frontmatter: dict[str, Any]) -> str:
+    return str(frontmatter.get("source_id") or frontmatter.get("id") or "").strip()
+
 def _manifest_hash(path: Path) -> str | None:
     frontmatter, _ = _read_frontmatter(path)
     value = frontmatter.get("content_hash")
@@ -174,7 +189,7 @@ def _manifest_hash(path: Path) -> str | None:
 
 def _manifest_source_path(path: Path) -> str | None:
     frontmatter, _ = _read_frontmatter(path)
-    value = frontmatter.get("source_path")
+    value = frontmatter.get("source_path") or frontmatter.get("original_path")
     return str(value) if value else None
 
 

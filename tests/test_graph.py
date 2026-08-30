@@ -121,10 +121,35 @@ def test_book_discovery_and_dry_run_are_evidence_backed(tmp_path):
     assert report["status"] == "planned"
     assert report["source_integrity"]["status"] == "ready_for_span_review"
     assert report["stats"]["warnings"] == 1
+
     labels = {node["label"] for node in report["plan"]["nodes"]}
     assert {"Source", "Document", "Chunk", "Entity", "Claim", "Evidence"} <= labels
     assert all(relation["properties"]["evidence_id"] for relation in report["plan"]["relationships"])
     assert any(node["properties"]["qdrant_point_id"] is None for node in report["plan"]["nodes"] if node["label"] == "Chunk")
+
+def test_book_discovery_accepts_legacy_manifest_identity_and_source_path(tmp_path):
+    config = _book_config(tmp_path)
+    vault = config.vault_root
+    manifest = vault / "03_RESOURCES/books/raw/book-one/manifest.md"
+    raw_text = (vault / "03_RESOURCES/books/raw/book-one.md").read_text(encoding="utf-8")
+    manifest.write_text(
+        "\n".join(
+            [
+                "id: book-one",
+                "title: Book One",
+                "author: Author One",
+                f"content_hash: {hashlib.sha256(raw_text.encode('utf-8')).hexdigest()}",
+                "original_path: 03_RESOURCES/books/raw/book-one.md",
+                "",
+                "# Legacy manifest",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    artifact = discover_book(vault, "book-one")
+    assert artifact.raw_relative_path == "03_RESOURCES/books/raw/book-one.md"
+    assert artifact.authors == ("Author One",)
 
 
 def test_book_upsert_uses_stable_ids_without_duplicates(tmp_path):
