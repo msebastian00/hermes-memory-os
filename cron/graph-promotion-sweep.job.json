@@ -1,0 +1,38 @@
+{
+  "name": "graph-promotion-sweep",
+  "enabled": false,
+  "schedule": "30 1 * * *",
+  "repeat": "forever",
+  "no_agent": true,
+  "deliver": "local",
+  "script": "graph_promotion_sweep_cron.sh",
+  "skills": [],
+  "workdir": "/workspace/agent-dev/hermes-memory-os",
+  "command": "hermes-graph --config /workspace/agent-dev/hermes-memory-os/config/hermes-graph.example.yml promote-queued --memory-config /workspace/agent-dev/hermes-memory-os/config/hermes-memory-os.semantic.local.yml --write-mode upsert",
+  "placement": {
+    "after": "vault-book-ingest-one",
+    "after_schedule": "30 22 * * 1,3,5",
+    "reason": "The daily sweep promotes only queue-authorized sources that already have reviewed ingestion artifacts, source-integrity proof, and exact chunk spans. It defers and reports every incomplete source."
+  },
+  "constraints": {
+    "authorization": "book-ingestion-queue",
+    "required_machine_gates": [
+      "reviewed retrieval chunks",
+      "canonical source synthesis",
+      "source integrity ready_for_span_review",
+      "exact chunk-body spans",
+      "Qdrant crosswalk dry-run",
+      "Neo4j graph dry-run",
+      "evidence and confidence"
+    ],
+    "forbidden": [
+      "vault canon rewrite",
+      "policy rewrite",
+      "automatic near-duplicate merge",
+      "automatic alias creation"
+    ],
+    "reports_dir_only": "/workspace/agent-dev/hermes-memory-os/graph/reports",
+    "log_secrets": false,
+    "failure": "defer affected source, write report, and retry next sweep"
+  }
+}

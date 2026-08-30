@@ -132,20 +132,10 @@ def test_book_upsert_uses_stable_ids_without_duplicates(tmp_path):
     client = _FakeNeo4j()
     builder = GraphBookBuilder(config)
 
-    candidates = concept_candidates("book-one", ["Finite game", "Infinite game"])
-    review = collect_overlap_review(candidates, graph_client=None, memory_app=None)
-    review_path = write_overlap_review_report(review, config.reports_root / "book-one-overlap-review.md")
-    approved = review_path.read_text(encoding="utf-8")
-    approved = approved.replace("status: incomplete", "status: approved").replace("status: pending_human_review", "status: approved")
-    approved = approved.replace("review_complete: false", "review_complete: true")
-    approved = approved.replace("approved_by: null", "approved_by: Mike")
-    approved = approved.replace("approved_at: null", "approved_at: 2026-08-30T00:00:00Z")
-    review_path.write_text(approved, encoding="utf-8")
-
-    first = builder.build("book-one", write_mode="upsert", overlap_review_path=review_path, client=client)
+    first = builder.build("book-one", write_mode="upsert", client=client)
     first_node_ids = set(client.nodes)
     first_relationship_ids = set(client.relationships)
-    second = builder.build("book-one", write_mode="upsert", overlap_review_path=review_path, client=client)
+    second = builder.build("book-one", write_mode="upsert", client=client)
 
     assert first["status"] == second["status"] == "upserted"
     assert set(client.nodes) == first_node_ids

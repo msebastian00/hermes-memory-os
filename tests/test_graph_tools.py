@@ -36,6 +36,10 @@ source_path: 03_RESOURCES/books/raw/book-finite-infinite-games-undated.md
     )
     _write(vault / "03_RESOURCES/books/raw/book-finite-infinite-games-undated.md", "Original source text.")
     _write(
+        vault / "05_QUEUE/book-ingestion/incoming/book-finite-infinite-games-undated.md",
+        f"---\nsource_id: {source_id}\ntype: book-ingestion-queue\n---\n",
+    )
+    _write(
         vault / "02_WIKI/sources/books/finite-infinite-games.md",
         f"""---
 source_id: {source_id}
@@ -138,7 +142,7 @@ class _RecordingBuilder:
         self.config = config
         self.calls = []
 
-    def build(self, source_id, *, write_mode="dry_run", qdrant_crosswalk=None, overlap_review_path=None, client=None):
+    def build(self, source_id, *, write_mode="dry_run", qdrant_crosswalk=None, client=None):
         self.calls.append(
             {
                 "source_id": source_id,
@@ -266,20 +270,7 @@ def test_dry_run_is_default_and_does_not_upsert(tmp_path):
     assert "plan" not in json.loads(Path(result["report_path"]).read_text())
 
 
-def test_upsert_requires_human_approval(tmp_path):
-    _config, config_path = _allowed_book_config(tmp_path)
-    result = handle_graph_build_book(
-        {"source_id": ALLOWED_BOOK_SOURCE_ID, "write_mode": "upsert"},
-        config_path=config_path,
-        environ={"HERMES_GRAPH_ENABLED": "true"},
-        builder_factory=lambda config: (_ for _ in ()).throw(AssertionError("must not build")),
-    )
-    assert result["status"] == "approval_required"
-    assert result["write_mode"] == "dry_run"
-    assert "upsert_blocked_without_human_approved" in result["review_warnings"]
-
-
-def test_upsert_with_approval_uses_injected_client(tmp_path):
+def test_queue_authorized_upsert_uses_injected_client(tmp_path):
     _config, config_path = _allowed_book_config(tmp_path)
     client = _UpsertClient()
     built = []
@@ -293,7 +284,6 @@ def test_upsert_with_approval_uses_injected_client(tmp_path):
         {
             "source_id": ALLOWED_BOOK_SOURCE_ID,
             "write_mode": "upsert",
-            "human_approved": True,
         },
         config_path=config_path,
         environ={"HERMES_GRAPH_ENABLED": "true"},
@@ -312,7 +302,6 @@ def test_upsert_blocked_when_graph_disabled(tmp_path):
         {
             "source_id": ALLOWED_BOOK_SOURCE_ID,
             "write_mode": "upsert",
-            "human_approved": True,
         },
         config_path=config_path,
         environ={"HERMES_GRAPH_ENABLED": "false"},
@@ -322,12 +311,9 @@ def test_upsert_blocked_when_graph_disabled(tmp_path):
     assert result["write_mode"] == "dry_run"
 
 
-def test_explicitly_configured_source_id_is_accepted(tmp_path):
+def test_queue_authorized_source_id_is_accepted(tmp_path):
     _config, config_path = _allowed_book_config(tmp_path)
-    config_path.write_text(
-        "paths:\n  vault_root: vault\ngraph:\n  default_write_mode: dry_run\n  review_report_path: reports\n  allowed_book_source_ids:\n    - book-finite-infinite-games-undated\n    - book-other\n",
-        encoding="utf-8",
-    )
+    _write(tmp_path / "vault" / "05_QUEUE" / "book-ingestion" / "incoming" / "book-other.md", "---\nsource_id: book-other\n---\n")
     result = handle_graph_build_book(
         {"source_id": "book-other"},
         config_path=config_path,
@@ -347,8 +333,7 @@ def test_unsupported_source_id_is_rejected(tmp_path):
         builder_factory=lambda config: (_ for _ in ()).throw(AssertionError("must not build")),
     )
     assert result["status"] == "error"
-    assert "Unsupported source_id" in result["error"]
-    assert result["allowed_source_ids"] == [ALLOWED_BOOK_SOURCE_ID]
+    assert "not present in the book-ingestion queue" in result["error"]
 
 
 def test_report_path_cannot_escape_reports_dir(tmp_path):
@@ -443,7 +428,7 @@ def test_policy_ingest_remains_staged_and_review_is_exposed():
     ingest = dispatch_graph_tool("graph_policy_ingest", {"path": "04_SYSTEM/policies"})
     assert ingest["status"] == "not_activated"
     names = {schema["name"] for schema in openai_graph_tool_schemas()}
-    assert names == {"graph_retrieve", "graph_build_book", "graph_maintenance", "graph_review"}
+    assert names == {"graph_retrieve", "graph_build_book", "graph_promote_book", "graph_maintenance", "graph_review"}
 
 
 def test_provider_exposes_graph_tools_and_retrieve_degrades(tmp_path, monkeypatch):
@@ -453,7 +438,7 @@ def test_provider_exposes_graph_tools_and_retrieve_degrades(tmp_path, monkeypatc
     provider = HermesMemoryOSProvider()
     provider.initialize({"data_dir": str(tmp_path)})
     names = {schema["name"] for schema in provider.get_tool_schemas()}
-    assert {"graph_retrieve", "graph_build_book", "graph_maintenance", "graph_review"} <= names
+    assert {"graph_retrieve", "graph_build_book", "graph_promote_book", "graph_maintenance", "graph_review"} <= names
     packet = provider.handle_tool_call("graph_retrieve", {"query": "anything"})
     assert packet["graph_enabled"] is False
     assert "graph_disabled" in packet["review_warnings"]

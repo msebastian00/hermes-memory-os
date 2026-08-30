@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
+from .autopromote import is_queued_book_source, promote_queued_book
 from .builder import GraphBookBuilder, discover_book
 from .config import GraphConfig, GraphConfigError
 from .flags import GRAPH_CONFIG_ENV, graph_enabled, truthy
@@ -65,35 +66,25 @@ def openai_graph_tool_schemas() -> list[dict[str, Any]]:
         {
             "name": "graph_build_book",
             "description": (
-                "Build an explicitly configured book graph slice via hermes-graph. Defaults to "
-                "dry_run. Upsert requires human_approved=true. Never writes Qdrant, "
-                "SQLite, vault notes, or policy files. source_id must be listed in "
-                "graph.allowed_book_source_ids."
+                "Build a queue-authorized book graph slice via hermes-graph. Defaults to "
+                "dry_run. Queue-authorized promotion runs its own dry validation before writes. Never writes Qdrant, "
+                "SQLite, vault notes, or policy files. source_id must be present in the book-ingestion queue."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "source_id": {
                         "type": "string",
-                        "description": "Must be listed in graph.allowed_book_source_ids",
+                        "description": "Must be present in the book-ingestion queue",
                     },
                     "write_mode": {
                         "type": "string",
                         "enum": ["dry_run", "upsert"],
                         "description": "Default dry_run",
                     },
-                    "human_approved": {
-                        "type": "boolean",
-                        "description": "Required true for upsert. Default false.",
-                        "default": False,
-                    },
                     "qdrant_crosswalk_path": {
                         "type": "string",
                         "description": "Optional JSON map of source chunk IDs to existing Qdrant point IDs",
-                    },
-                    "overlap_review_path": {
-                        "type": "string",
-                        "description": "Required for upsert: approved graph-overlap-review report under graph reports.",
                     },
                     "report_out": {
                         "type": "string",
@@ -102,6 +93,22 @@ def openai_graph_tool_schemas() -> list[dict[str, Any]]:
                 },
                 "required": ["source_id"],
             },
+        },
+        {
+            "name": "graph_promote_book",
+            "description": (
+                "Autonomously promote one intentionally queued book after source-integrity, exact-span, "
+                "Qdrant crosswalk, graph dry-run, and evidence checks. Writes Qdrant and Neo4j only after "
+                "those machine checks pass. Creates review and maintenance reports; never rewrites vault canon."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_id": {"type": "string", "description": "Source ID present in the book-ingestion queue."},
+                    "chunk_bodies_path": {"type": "string", "description": "Optional exact-span chunk-body manifest; default is the generated source-analysis path."}
+                },
+                "required": ["source_id"]
+            }
         },
         {
             "name": "graph_maintenance",
@@ -190,6 +197,14 @@ def dispatch_graph_tool(
             environ=environ,
             neo4j_client_factory=neo4j_client_factory,
         )
+    if name == "graph_promote_book":
+        return handle_graph_promote_book(
+            memory_app,
+            arguments,
+            config_path=config_path,
+            environ=environ,
+            neo4j_client_factory=neo4j_client_factory,
+        )
     if name == "graph_build_book":
         return handle_graph_build_book(
             arguments,
@@ -272,6 +287,42 @@ def handle_graph_retrieve(
     return packet
 
 
+def handle_graph_promote_book(
+    memory_app: Any,
+    arguments: dict[str, Any],
+    *,
+    config_path: str | Path | None = None,
+    environ: dict[str, str] | None = None,
+    neo4j_client_factory: Callable[[GraphConfig], Any] | None = None,
+) -> dict[str, Any]:
+    source_id = str(arguments.get("source_id") or "").strip()
+    if not source_id:
+        return _error("source_id is required", action="graph_promote_book", write_mode="upsert")
+    if memory_app is None:
+        return _error("Memory OS provider is not initialized", action="graph_promote_book", source_ids=[source_id], write_mode="upsert")
+    if not graph_enabled(environ):
+        return _error("HERMES_GRAPH_ENABLED is false; refusing autonomous promotion", action="graph_promote_book", source_ids=[source_id], write_mode="dry_run")
+    try:
+        config = load_graph_config(config_path, environ)
+        client = (neo4j_client_factory or Neo4jClient.from_config)(config)
+        result = promote_queued_book(
+            memory_app,
+            config,
+            source_id,
+            client=client,
+            chunk_bodies_path=Path(str(arguments["chunk_bodies_path"])) if arguments.get("chunk_bodies_path") else None,
+        )
+    except Exception as exc:
+        return _error(
+            f"graph_promote_book failed: {exc.__class__.__name__}: {exc}",
+            action="graph_promote_book",
+            source_ids=[source_id],
+            write_mode="upsert",
+        )
+    _log_action("graph_promote_book", [source_id], "upsert", list(result.get("overlap_review", {}).get("warnings") or []), result.get("maintenance_counts") or {})
+    return result
+
+
 def handle_graph_build_book(
     arguments: dict[str, Any],
     *,
@@ -282,21 +333,12 @@ def handle_graph_build_book(
 ) -> dict[str, Any]:
     source_id = str(arguments.get("source_id") or "").strip()
     write_mode = str(arguments.get("write_mode") or "dry_run").strip() or "dry_run"
-    human_approved = truthy(arguments.get("human_approved", False))
     enabled = graph_enabled(environ)
 
     if not source_id:
         return _error("source_id is required", action="graph_build_book", write_mode=write_mode)
     if write_mode not in {"dry_run", "upsert"}:
         return _error("write_mode must be dry_run or upsert", action="graph_build_book", source_ids=[source_id])
-    if write_mode == "upsert" and not human_approved:
-        return {
-            "status": "approval_required",
-            "error": "upsert requires explicit human_approved=true",
-            "write_mode": "dry_run",
-            "source_id": source_id,
-            "review_warnings": ["upsert_blocked_without_human_approved"],
-        }
     if write_mode == "upsert" and not enabled:
         return {
             "status": "graph_disabled",
@@ -311,15 +353,13 @@ def handle_graph_build_book(
     except (GraphConfigError, OSError) as exc:
         return _error(str(exc), action="graph_build_book", source_ids=[source_id], write_mode=write_mode)
 
-    if source_id not in config.allowed_book_source_ids:
-        result = _error(
-            f"Unsupported source_id {source_id!r}. Allowed: {list(config.allowed_book_source_ids)}",
+    if not is_queued_book_source(config.vault_root, source_id):
+        return _error(
+            f"source_id is not present in the book-ingestion queue: {source_id}",
             action="graph_build_book",
             source_ids=[source_id],
             write_mode=write_mode,
         )
-        result["allowed_source_ids"] = list(config.allowed_book_source_ids)
-        return result
 
     requested_out = arguments.get("report_out")
     report_path = None
@@ -349,7 +389,6 @@ def handle_graph_build_book(
             source_id,
             write_mode=write_mode,
             qdrant_crosswalk=crosswalk,
-            overlap_review_path=Path(str(arguments["overlap_review_path"])) if arguments.get("overlap_review_path") else None,
             client=client,
         )
     except Exception as exc:

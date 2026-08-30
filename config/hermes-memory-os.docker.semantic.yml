@@ -11,6 +11,7 @@ wiki_brain:
 qdrant:
   enabled: true
   url: http://qdrant:6333
+  api_key: "${QDRANT__SERVICE__API_KEY}"
   vector_size: 768
   distance: Cosine
   collections:

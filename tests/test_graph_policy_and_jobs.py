@@ -19,6 +19,8 @@ ENTITY_RESOLUTION_POLICY = VAULT / "04_SYSTEM/policies/entity-resolution-policy.
 ROOT = Path(__file__).resolve().parents[1]
 JOB = ROOT / "cron/graph-maintenance.job.json"
 SCRIPT = ROOT / "scripts/graph_maintenance_cron.sh"
+PROMOTION_JOB = ROOT / "cron/graph-promotion-sweep.job.json"
+PROMOTION_SCRIPT = ROOT / "scripts/graph_promotion_sweep_cron.sh"
 
 
 def _write(path: Path, text: str) -> None:
@@ -37,7 +39,7 @@ def test_graph_policy_requires_evidence_and_dry_run_review():
         "reviewed retrieval chunks",
         "span manifest",
         "raw-source SHA-256",
-        "Dry-run review MUST precede",
+        "Dry-run validation MUST precede",
         "MUST NEVER rewrite policy files",
         "ready_for_span_review",
         "review artifacts, never autonomous corrections",
@@ -91,7 +93,7 @@ def test_entity_resolution_policy_requires_read_only_overlap_review():
         "related_but_distinct",
         "uncertain",
         "MUST NOT automatically merge",
-        "matching overlap-review report",
+        "candidate set by digest",
     ):
         assert required in text
     assert "entity-resolution-policy.md" in ROUTER.read_text(encoding="utf-8")
@@ -137,6 +139,31 @@ def test_maintenance_script_dry_run_prints_command_only(tmp_path, monkeypatch):
     assert "build-book" not in result.stdout
     assert "PASSWORD" not in result.stdout
     assert "PASSWORD" not in result.stderr
+
+
+def test_promotion_job_template_is_queue_authorized_and_dry_run_safe(monkeypatch):
+    job = json.loads(PROMOTION_JOB.read_text(encoding="utf-8"))
+    assert job["enabled"] is False
+    assert job["schedule"] == "30 1 * * *"
+    assert job["no_agent"] is True
+    assert job["script"] == "graph_promotion_sweep_cron.sh"
+    assert job["constraints"]["authorization"] == "book-ingestion-queue"
+    assert "exact chunk-body spans" in job["constraints"]["required_machine_gates"]
+    assert "automatic near-duplicate merge" in job["constraints"]["forbidden"]
+
+    import subprocess
+
+    result = subprocess.run(
+        ["bash", str(PROMOTION_SCRIPT)],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "GRAPH_PROMOTION_DRY_RUN": "1", "GRAPH_PROMOTION_PRINT_ONLY": "1"},
+    )
+    assert result.returncode == 0
+    assert "dry_run hermes-graph" in result.stdout
+    assert "promote-queued" in result.stdout
 
 
 def test_span_inventory_skips_raw_only_and_emits_unverified_chunks(tmp_path):

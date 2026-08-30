@@ -1,7 +1,4 @@
-"""Minimal Qdrant HTTP client.
-
-The implementation intentionally uses HTTP instead of requiring qdrant-client for the MVP.
-"""
+"""Minimal Qdrant HTTP client."""
 
 from __future__ import annotations
 
@@ -11,20 +8,26 @@ import requests
 
 
 class QdrantClient:
-    def __init__(self, url: str, timeout: int = 10):
+    def __init__(self, url: str, timeout: int = 10, api_key: str | None = None):
         self.url = url.rstrip("/")
         self.timeout = timeout
+        self.api_key = api_key or ""
+
+    def _request_kwargs(self) -> dict[str, Any]:
+        if not self.api_key:
+            return {"timeout": self.timeout}
+        return {"timeout": self.timeout, "headers": {"api-key": self.api_key}}
 
     def health(self) -> bool:
         try:
-            response = requests.get(f"{self.url}/", timeout=self.timeout)
+            response = requests.get(f"{self.url}/", **self._request_kwargs())
             return response.status_code < 500
         except requests.RequestException:
             return False
 
     def collection_exists(self, name: str) -> bool:
         try:
-            response = requests.get(f"{self.url}/collections/{name}", timeout=self.timeout)
+            response = requests.get(f"{self.url}/collections/{name}", **self._request_kwargs())
             if response.status_code == 404:
                 return False
             response.raise_for_status()
@@ -33,7 +36,7 @@ class QdrantClient:
             return False
 
     def collection_status(self, name: str) -> dict[str, Any]:
-        response = requests.get(f"{self.url}/collections/{name}", timeout=self.timeout)
+        response = requests.get(f"{self.url}/collections/{name}", **self._request_kwargs())
         response.raise_for_status()
         return response.json().get("result", {})
 
@@ -43,7 +46,7 @@ class QdrantClient:
         response = requests.put(
             f"{self.url}/collections/{name}",
             json={"vectors": {"size": vector_size, "distance": distance}},
-            timeout=self.timeout,
+            **self._request_kwargs(),
         )
         if response.status_code == 409:
             return
@@ -53,7 +56,7 @@ class QdrantClient:
         response = requests.put(
             f"{self.url}/collections/{collection}/points",
             json={"points": [{"id": point_id, "vector": vector, "payload": payload}]},
-            timeout=self.timeout,
+            **self._request_kwargs(),
         )
         response.raise_for_status()
 
@@ -61,7 +64,7 @@ class QdrantClient:
         response = requests.put(
             f"{self.url}/collections/{collection}/points",
             json={"points": points},
-            timeout=self.timeout,
+            **self._request_kwargs(),
         )
         response.raise_for_status()
 
@@ -79,7 +82,7 @@ class QdrantClient:
         response = requests.post(
             f"{self.url}/collections/{collection}/points/search",
             json=body,
-            timeout=self.timeout,
+            **self._request_kwargs(),
         )
         response.raise_for_status()
         return response.json().get("result", [])

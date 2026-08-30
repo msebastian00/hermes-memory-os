@@ -1,8 +1,8 @@
-"""Read-only concept-overlap review for graph promotion.
+"""Read-only concept-overlap analysis for autonomous graph promotion.
 
-The reviewer deliberately separates candidate discovery from human resolution. It
-queries the Memory OS semantic backend (Qdrant) first, then Neo4j entities, and
-only writes a Markdown review artifact when requested by the caller.
+The analyzer queries the Memory OS semantic backend (Qdrant) first, then Neo4j
+entities. Exact normalized identities are deterministically reused by the graph
+builder; non-exact matches remain distinct and are reported as associations.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def concept_candidates(source_id: str, concepts: Iterable[str]) -> list[dict[str
 
 
 def candidate_digest(candidates: Iterable[dict[str, Any]]) -> str:
-    """Hash only the identity fields a reviewer is approving."""
+    """Hash the identity fields used by an overlap analysis."""
 
     canonical = sorted(
         {
@@ -123,14 +123,14 @@ def collect_overlap_review(
         vault_matches = _vault_matches(candidate, vault_entities)
         semantic_hits = semantic_by_candidate.get(key, [])
         if (graph_matches and graph_matches[0]["match_kind"] == "exact") or (vault_matches and vault_matches[0]["match_kind"] == "exact"):
-            status = "review_required"
-            recommended_action = "Attach only after a human verifies that this is the same canonical concept."
+            status = "exact_identity_reused"
+            recommended_action = "Reuse the deterministic normalized identity; retain this evidence report."
         elif graph_matches or vault_matches or semantic_hits:
-            status = "review_required"
-            recommended_action = "Classify as same_concept, broader_or_narrower, related_but_distinct, or uncertain."
+            status = "related_candidate_reported"
+            recommended_action = "Keep distinct entities. Report possible broader_or_narrower, related_but_distinct, or uncertain association."
         else:
             status = "no_match_found"
-            recommended_action = "No automatic action. A human must still approve this review before graph upsert."
+            recommended_action = "Create the evidence-backed entity; no overlap candidate was found."
         items.append(
             {
                 **candidate,
@@ -144,14 +144,15 @@ def collect_overlap_review(
 
     return {
         "type": "graph-overlap-review",
-        "status": ("incomplete" if warnings else "pending_human_review"),
+        "status": ("incomplete" if warnings else "reported"),
         "generated_at": now_iso(),
         "candidate_digest": candidate_digest(requested),
         "review_complete": not warnings,
         "candidates": items,
         "counts": {
             "candidates": len(items),
-            "review_required": sum(item["status"] == "review_required" for item in items),
+            "exact_identity_reused": sum(item["status"] == "exact_identity_reused" for item in items),
+            "related_candidate_reported": sum(item["status"] == "related_candidate_reported" for item in items),
             "no_match_found": sum(item["status"] == "no_match_found" for item in items),
         },
         "review_warnings": list(dict.fromkeys(warnings)),
@@ -164,7 +165,7 @@ def collect_overlap_review(
 
 
 def write_overlap_review_report(review: dict[str, Any], output_path: Path) -> Path:
-    """Write a human-reviewable report. Approval is an explicit manual edit."""
+    """Write a read-only provenance report for autonomous promotion."""
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     frontmatter = {
@@ -174,14 +175,13 @@ def write_overlap_review_report(review: dict[str, Any], output_path: Path) -> Pa
         "candidate_digest": review["candidate_digest"],
         "review_complete": review["review_complete"],
         "source_ids": sorted({item["source_id"] for item in review["candidates"]}),
-        "approved_by": None,
-        "approved_at": None,
+        "resolution_mode": "deterministic-exact-reuse-and-report-only-near-matches",
     }
     lines = ["---", yaml.safe_dump(frontmatter, sort_keys=False).strip(), "---", "", "# Graph Concept Overlap Review", ""]
     lines.extend(
         [
-            "This is a review artifact. It does not merge entities, change aliases, rewrite vault notes, or write Qdrant, Neo4j, or Memory OS.",
-            "To permit a graph upsert, rerun until `review_complete: true`; then a human must set frontmatter `status: approved`, record `approved_by` and `approved_at`, and resolve every `review_required` candidate below.",
+            "This is an automated evidence report. It never merges non-exact entities, changes aliases, or rewrites vault notes.",
+            "Exact normalized identities are reused deterministically. Lexical or semantic near matches remain separate and are surfaced for retrieval and Chief-of-Staff reporting.",
             "",
         ]
     )
@@ -192,7 +192,7 @@ def write_overlap_review_report(review: dict[str, Any], output_path: Path) -> Pa
                 f"- Source ID: `{item['source_id']}`",
                 f"- Status: `{item['status']}`",
                 f"- Recommended action: {item['recommended_action']}",
-                "- Resolution: `pending`",
+                "- Resolution mode: `automatic-report-only`",
                 "",
                 "### Graph candidates",
             ]
@@ -228,30 +228,6 @@ def write_overlap_review_report(review: dict[str, Any], output_path: Path) -> Pa
         lines.append("")
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return output_path
-
-
-def validate_approved_overlap_review(
-    path: Path | None, *, source_id: str, candidates: Iterable[dict[str, Any]]
-) -> None:
-    """Refuse graph upserts without an explicit, matching human review."""
-
-    if path is None or not path.is_file():
-        raise ValueError("Graph upsert requires an approved overlap-review report.")
-    metadata = _read_frontmatter(path)
-    expected_digest = candidate_digest(candidates)
-    if metadata.get("type") != "graph-overlap-review":
-        raise ValueError("Overlap-review report has an invalid type.")
-    if metadata.get("candidate_digest") != expected_digest:
-        raise ValueError("Overlap-review report does not match the current source concepts.")
-    source_ids = {str(value) for value in metadata.get("source_ids") or []}
-    if source_ids != {source_id}:
-        raise ValueError("Overlap-review report does not match the requested source ID.")
-    if metadata.get("review_complete") is not True:
-        raise ValueError("Overlap-review report is incomplete; restore Qdrant and Neo4j then rerun it.")
-    if metadata.get("status") != "approved":
-        raise ValueError("Overlap-review report must have status: approved before graph upsert.")
-    if not str(metadata.get("approved_by") or "").strip() or not str(metadata.get("approved_at") or "").strip():
-        raise ValueError("Approved overlap-review report requires approved_by and approved_at.")
 
 
 def normalize_name(value: str) -> str:

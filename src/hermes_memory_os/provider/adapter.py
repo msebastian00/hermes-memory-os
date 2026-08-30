@@ -128,9 +128,9 @@ class HermesMemoryOSProvider:
         return (
             "Hermes Memory OS is available for source-labeled local memory recall. "
             "Use injected memory as context, not as unquestioned truth. "
-            "Graph retrieval and graph upserts require HERMES_GRAPH_ENABLED=true; graph_retrieve "
+            "Graph retrieval and autonomous graph promotion require HERMES_GRAPH_ENABLED=true; graph_retrieve "
             "still falls back to Memory OS. graph_review is read-only and may run while graph expansion "
-            "is disabled. Generated source claims stay attributed to their source."
+            "is disabled. Generated source claims stay attributed to their source. A book in the ingestion queue authorizes machine-validated promotion; near-duplicate entities are reported rather than merged."
         )
 
     def prefetch(self, query: str, context: dict[str, Any] | None = None) -> str:

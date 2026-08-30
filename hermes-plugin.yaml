@@ -10,6 +10,7 @@ tools:
   - hermes_memory_feedback
   - graph_retrieve
   - graph_build_book
+  - graph_promote_book
   - graph_maintenance
   - graph_review
 config:

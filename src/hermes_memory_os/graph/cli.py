@@ -12,6 +12,7 @@ from .builder import GraphBookBuilder, discover_book
 from .config import GraphConfig, GraphConfigError
 from .crosswalk import index_book_crosswalk, write_crosswalk
 from .policy import GraphPolicyBuilder
+from .autopromote import promote_queued_book, promote_queued_books
 from .overlap import concept_candidates, collect_overlap_review, write_overlap_review_report
 from .maintenance import collect_maintenance, write_maintenance_report
 from .source_integrity import validate_book_source, write_source_integrity_report
@@ -38,7 +39,6 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument("--source-id", required=True)
     build.add_argument("--write-mode", choices=("dry_run", "upsert"))
     build.add_argument("--qdrant-crosswalk", type=Path)
-    build.add_argument("--overlap-review", type=Path, help="Approved graph-overlap-review report required for upsert.")
     build.add_argument("--report-out", type=Path)
 
 
@@ -61,6 +61,18 @@ def main(argv: list[str] | None = None) -> int:
     review.add_argument("--memory-config", type=Path, help="Memory OS config used for Qdrant semantic review.")
     review.add_argument("--data-dir", type=Path)
     review.add_argument("--output", type=Path)
+
+    promote = sub.add_parser("promote-queued-book", help="Autonomously promote one queued book after machine validation.")
+    promote.add_argument("--source-id", required=True)
+    promote.add_argument("--memory-config", required=True, type=Path)
+    promote.add_argument("--data-dir", type=Path)
+    promote.add_argument("--chunk-bodies", type=Path)
+    promote.add_argument("--write-mode", choices=("dry_run", "upsert"), default="dry_run")
+
+    promote_all = sub.add_parser("promote-queued", help="Autonomously sweep all queued books and promote machine-ready sources.")
+    promote_all.add_argument("--memory-config", required=True, type=Path)
+    promote_all.add_argument("--data-dir", type=Path)
+    promote_all.add_argument("--write-mode", choices=("dry_run", "upsert"), default="dry_run")
 
     maintenance.add_argument("--output", type=Path)
     maintenance.add_argument("--min-confidence", type=float, default=0.75)
@@ -98,19 +110,35 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "build-book":
             write_mode = args.write_mode or config.default_write_mode
             crosswalk = _load_crosswalk(args.qdrant_crosswalk)
-            overlap_review_path = args.overlap_review
             client = Neo4jClient.from_config(config) if write_mode == "upsert" else None
             result = GraphBookBuilder(config).build(
                 args.source_id,
                 write_mode=write_mode,
                 qdrant_crosswalk=crosswalk,
-                overlap_review_path=overlap_review_path,
                 client=client,
             )
             if args.report_out:
                 args.report_out.parent.mkdir(parents=True, exist_ok=True)
                 args.report_out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             _print({key: value for key, value in result.items() if key != "plan"})
+            return 0
+        if args.command == "promote-queued":
+            app = MemoryApp.from_config(config_path=args.memory_config, data_dir=args.data_dir)
+            app.init_storage()
+            _print(promote_queued_books(app, config, client=Neo4jClient.from_config(config) if args.write_mode == "upsert" else None, write_mode=args.write_mode))
+            return 0
+        if args.command == "promote-queued-book":
+            app = MemoryApp.from_config(config_path=args.memory_config, data_dir=args.data_dir)
+            app.init_storage()
+            result = promote_queued_book(
+                app,
+                config,
+                args.source_id,
+                client=Neo4jClient.from_config(config) if args.write_mode == "upsert" else None,
+                chunk_bodies_path=args.chunk_bodies,
+                write_mode=args.write_mode,
+            )
+            _print(result)
             return 0
         if args.command == "review-book-overlap":
             artifact = discover_book(config.vault_root, args.source_id)

@@ -14,6 +14,13 @@ from .retrieval.retriever import Retriever
 from .semantic import SemanticIndexer, SemanticSearchBackend
 
 
+def _qdrant_client(config: MemoryConfig) -> QdrantClient:
+    api_key = str(config.qdrant.get("api_key") or "").strip()
+    if api_key:
+        return QdrantClient(config.qdrant["url"], api_key=api_key)
+    return QdrantClient(config.qdrant["url"])
+
+
 class MemoryApp:
     """Convenience object holding configured services."""
 
@@ -24,7 +31,7 @@ class MemoryApp:
         semantic_search: SemanticSearchBackend | None = None
         if self.semantic_enabled:
             embedder = build_embedder(config.embeddings)
-            qdrant = QdrantClient(config.qdrant["url"])
+            qdrant = _qdrant_client(config)
             self.semantic_indexer = SemanticIndexer(
                 store=self.store,
                 embedder=embedder,
@@ -86,7 +93,7 @@ class MemoryApp:
         if self.config.embeddings.get("provider", "none") != "none":
             status["embedding_reachable"] = build_embedder(self.config.embeddings).health()
         if self.config.qdrant.get("enabled") is True:
-            client = QdrantClient(self.config.qdrant["url"])
+            client = _qdrant_client(self.config)
             status["qdrant_reachable"] = client.health()
             status["qdrant_collections"] = {
                 role: {
@@ -151,7 +158,7 @@ class MemoryApp:
         qdrant = self.config.qdrant
         if qdrant.get("enabled") is not True:
             return
-        client = QdrantClient(qdrant["url"])
+        client = _qdrant_client(self.config)
         for name in qdrant.get("collections", {}).values():
             client.ensure_collection(
                 name,

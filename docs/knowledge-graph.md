@@ -48,7 +48,7 @@ Run the deterministic source-integrity preflight before preparing a span manifes
 
     hermes-graph --config config/hermes-graph.example.yml validate-book-source --source-id book-finite-infinite-games-undated
 
-`ready_for_span_review` permits human review of exact chunk spans. `blocked` permits diagnosis only: do not create Qdrant points, a crosswalk, Neo4j records, new source claims, or canonical wiki changes. A hash match alone is insufficient; retrieval ranges must also be supported by the raw extract. Correct an incomplete extraction as a new immutable derivative, retain the original for audit, then regenerate its reviewed chunks.
+`ready_for_span_review` permits automatic exact-span validation and Qdrant crosswalk planning. `blocked` permits diagnosis only: do not create Qdrant points, a crosswalk, Neo4j records, new source claims, or canonical wiki changes. A hash match alone is insufficient; retrieval ranges must also be supported by the raw extract. Correct an incomplete extraction as a new immutable derivative, retain the original for audit, then regenerate its reviewed chunks.
 
 The selected source is book-finite-infinite-games-undated. It has generated retrieval metadata but no verified Qdrant points, so the dry run reports embedding_missing warnings and writes no vector data. It is currently blocked by source-integrity validation because 32 section markers referenced by its reviewed chunks are absent from the registered raw extract. Do not upsert it until a complete corrected extraction has passed the preflight.
 
@@ -56,7 +56,7 @@ The selected source is book-finite-infinite-games-undated. It has generated retr
 hermes-graph --config config/hermes-graph.example.yml validate-book-source --source-id book-finite-infinite-games-undated
     hermes-graph --config config/hermes-graph.example.yml build-book --source-id book-finite-infinite-games-undated --write-mode dry_run --report-out graph/reports/finite-infinite-games-dry-run.json
 
-After reviewing the report and initializing Neo4j, write the same stable plan with MERGE upserts:
+After the machine validation sequence succeeds, `promote-queued-book` writes the stable plan with MERGE upserts:
 
     hermes-graph --config config/hermes-graph.example.yml build-book --source-id book-finite-infinite-games-undated --write-mode upsert
 
@@ -64,21 +64,17 @@ If an existing Qdrant point crosswalk becomes available, provide a JSON object f
 
 ## Concept-overlap review
 
-Before a concept-bearing source is upserted, generate an overlap report using Qdrant-first candidate discovery and Neo4j entity/alias comparison:
+For a concept-bearing source, generate an overlap report using Qdrant-first candidate discovery and Neo4j entity/alias comparison:
 
     hermes-graph --config config/hermes-graph.example.yml review-book-overlap --source-id <source-id> --memory-config <memory-os-config>
 
-The command writes only `graph/reports/<source-id>-overlap-review.md`. Restore both services and rerun if its frontmatter says `review_complete: false`. A human resolves candidate classifications in the report, then changes the frontmatter to `status: approved` and supplies `approved_by` and `approved_at`. The matching approved report is required for upsert:
-
-    hermes-graph --config config/hermes-graph.example.yml build-book --source-id <source-id> --write-mode upsert --overlap-review graph/reports/<source-id>-overlap-review.md
-
-This gate does not merge entities or create aliases. It blocks only graph promotion; normal raw-source preservation and non-graph ingestion remain unchanged.
+The command writes `graph/reports/<source-id>-overlap-review.md` as evidence. Exact normalized identities reuse their deterministic entity ID. Lexical and semantic near-matches remain distinct, are never aliased or merged automatically, and are surfaced as possible associations. A missing review dependency is reported but does not override source-integrity, exact-span, evidence, or confidence gates.
 
 ## Retrieval and maintenance
 
 GraphRetrievalAdapter calls the Memory OS semantic backend first, then expands matching graph chunks through Neo4j. It returns a compact context packet with evidence, chunk IDs, Qdrant point IDs, and warnings. Unsupported and low-confidence graph facts are excluded by default.
 
-Graph retrieval expansion and graph upserts at the Memory OS provider boundary are gated by `HERMES_GRAPH_ENABLED=false` by default. The read-only `graph_review` tool may generate review artifacts while expansion is disabled. See docs/knowledge-graph-runbook.md for enablement, rollback, and health checks. `graph_policy_ingest` remains staged. `graph_review` is active, read-only, and requires human approval outside the tool before a graph upsert.
+Graph retrieval expansion and graph upserts at the Memory OS provider boundary are gated by `HERMES_GRAPH_ENABLED=false` by default. The read-only `graph_review` tool may generate review artifacts while expansion is disabled. See docs/knowledge-graph-runbook.md for enablement, rollback, and health checks. `graph_policy_ingest` remains staged. `graph_review` is active and read-only; queue-authorized promotion does not require a human approval edit.
 
 Maintenance is additive and read-only against graph data. It reports duplicate entities, claims without evidence, low-confidence relationships, policy conflicts, and missing Qdrant crosswalks.
 

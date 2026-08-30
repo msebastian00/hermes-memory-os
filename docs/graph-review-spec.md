@@ -24,7 +24,7 @@ Create review items or reports for:
 
 Write Markdown review reports under the configured graph reports directory (`graph.review_report_path`), not under vault canon.
 
-Each item must include status, confidence, candidates, evidence quotes, source/chunk IDs, Qdrant point IDs when known, and a recommended human action.
+Each item must include status, confidence, candidates, evidence quotes, source/chunk IDs, Qdrant point IDs when known, and an automated recommendation. Exact normalized matches may reuse a stable ID; non-exact matches remain distinct and are reported.
 
 ## Relationship to maintenance
 
@@ -32,4 +32,4 @@ Each item must include status, confidence, candidates, evidence quotes, source/c
 
 ## Upsert gate
 
-A graph upsert requires a matching complete report under `graph/reports` with `review_complete: true`, `status: approved`, `approved_by`, and `approved_at` in frontmatter. Approval is human-only and authorizes only the matching graph upsert. It does not authorize aliases, merges, vault rewrites, or Memory OS promotion.
+A queue-authorized graph promotion writes the overlap report under `graph/reports` as provenance, runs dry validation before any upsert, and never automatically creates aliases or merges non-exact candidates. The report does not authorize vault rewrites or Memory OS promotion outside the verified Qdrant crosswalk.

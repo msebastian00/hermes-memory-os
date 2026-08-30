@@ -15,10 +15,27 @@ export HERMES_GRAPH_CONFIG=/workspace/agent-dev/hermes-memory-os/config/hermes-g
 
 Restart the Hermes session after changing the flag so plugin schemas reload.
 
+## Service endpoints
+
+Spark 2 publishes durable Compose endpoints for local and LAN/Tailscale clients:
+
+- Qdrant REST: `http://192.168.7.37:6333` (gRPC: `192.168.7.37:6334`)
+- Memory HTTP: `http://192.168.7.37:8765`
+
+Qdrant requires the `api-key` header. Its key is stored only in `agent-dev/hermes-memory-os/.env.http.local` as `QDRANT__SERVICE__API_KEY`; it is loaded by the Qdrant container and the graph promotion wrapper and must never be committed or printed. Memory HTTP requires its existing bearer token. Remote clients, including Alienware, should use Memory HTTP for ordinary retrieval; direct Qdrant access is for trusted maintenance clients that have the local Qdrant key.
+
+For a local direct graph command, load the non-committed service environment first:
+
+```bash
+set -a
+. /workspace/agent-dev/hermes-memory-os/.env.http.local
+set +a
+```
 Hermes tools (Memory OS provider boundary):
 
 - `graph_retrieve` — Qdrant/Memory OS first, then optional graph expansion
-- `graph_build_book` — dry-run by default; upsert needs `human_approved=true` and an approved matching overlap-review report
+- `graph_build_book` — diagnostic dry-run or direct graph plan for a source already authorized by the book-ingestion queue
+- `graph_promote_book` — autonomous queue-authorized promotion: integrity, exact spans, Qdrant crosswalk, graph dry-run, Qdrant upsert, Neo4j upsert, and reports
 - `graph_review` — read-only Qdrant-first and Neo4j concept-overlap review; it writes only a report
 - `graph_maintenance` — read-only report under the graph reports directory
 
@@ -36,11 +53,11 @@ hermes-graph --config config/hermes-graph.example.yml build-book --source-id boo
 hermes-graph --config config/hermes-graph.example.yml maintenance --output graph/reports/graph-maintenance.md
 ```
 
-Allowed book sources are an explicit `graph.allowed_book_source_ids` list in the local graph configuration. Adding a source to that list does not bypass source-integrity, reviewed-chunk, Qdrant, dry-run, or approval gates.
+A source in `05_QUEUE/book-ingestion/incoming`, `processing`, or `completed` is authorized for autonomous graph promotion. It still must pass source-integrity, reviewed-chunk, exact-span, Qdrant crosswalk, evidence, confidence, and dry-run gates.
 
 A source must return `ready_for_span_review` from `validate-book-source` before crosswalk or Neo4j upsert. `book-finite-infinite-games-undated` is currently blocked by missing raw-source section markers; its dry-run is diagnostic only. Keep the original extract unchanged, register a complete corrected derivative, then regenerate reviewed chunks and rerun the preflight.
 
-Do not run upsert from Hermes without an explicit `human_approved` tool parameter. Do not start Neo4j or schedule cron from the agent tools.
+Use `promote-queued-book` for an end-to-end promotion. It is idempotent and runs both dry validations before it creates Qdrant points or Neo4j records. The queue is authorization; a failed machine gate defers the source and writes a report.
 
 ## Concept-overlap review
 
@@ -52,7 +69,7 @@ hermes-graph --config config/hermes-graph.example.yml review-book-overlap \
   --memory-config <memory-os-config>
 ```
 
-It reads Qdrant through the existing Memory OS semantic backend first, then Neo4j entity names/aliases and canonical vault concept pages/aliases. It writes only `graph/reports/<source-id>-overlap-review.md`. If `review_complete: false`, restore the unavailable service and rerun. A human must resolve candidates, set `status: approved`, and populate `approved_by` and `approved_at`; pass that report to `build-book --write-mode upsert --overlap-review <report>`. The review cannot merge or alias concepts.
+It reads Qdrant through the existing Memory OS semantic backend first, then Neo4j entity names/aliases and canonical vault concept pages/aliases. It writes `graph/reports/<source-id>-overlap-review.md` as evidence. Exact normalized identities reuse their deterministic entity ID; near matches remain distinct and are reported as possible associations. The review never merges or aliases concepts.
 
 ## Health check
 
@@ -103,13 +120,32 @@ hermes cron create "30 21 * * *" --name graph-maintenance-review --deliver local
 # cronjob action=create schedule='30 21 * * *' name='graph-maintenance-review' no_agent=true script='graph_maintenance_cron.sh' deliver='local' workdir='/workspace/agent-dev/hermes-memory-os'
 ```
 
-The create path must set `no_agent=true` and `script=graph_maintenance_cron.sh`. Do not attach an LLM prompt. Do not enable book-build or upsert jobs.
+The create path must set `no_agent=true` and `script=graph_maintenance_cron.sh`. Do not attach an LLM prompt.
+
+## Autonomous promotion sweep (template, disabled)
+
+Hermes owns the schedule; Memory OS owns the versioned command. The sweep reads queue-authorized sources and promotes only sources that pass every machine gate.
+
+- Template: `cron/graph-promotion-sweep.job.json`
+- Schedule: `30 1 * * *` (daily UTC; safely after the M/W/F 22:30 book-ingest run)
+- Script: `scripts/graph_promotion_sweep_cron.sh` (`no_agent=true`, deliver local)
+- Reports: `graph/reports/promotions/queued-sweep.json` and source-specific evidence reports
+
+Dry-run:
+
+```bash
+cd /workspace/agent-dev/hermes-memory-os
+GRAPH_PROMOTION_DRY_RUN=1 bash scripts/graph_promotion_sweep_cron.sh
+```
+
+Enable through Hermes with `no_agent=true`, `script=graph_promotion_sweep_cron.sh`, `schedule=30 1 * * *`, `deliver=local`, and `workdir=/workspace/agent-dev/hermes-memory-os`. Do not attach an LLM prompt. The scheduler environment must contain the existing local `NEO4J_URI`, `NEO4J_USER`, and `NEO4J_PASSWORD` values without logging them.
 
 Verify:
 
 ```bash
 hermes cron list --all
 GRAPH_MAINTENANCE_DRY_RUN=1 bash /workspace/agent-dev/hermes-memory-os/scripts/graph_maintenance_cron.sh
+GRAPH_PROMOTION_DRY_RUN=1 bash /workspace/agent-dev/hermes-memory-os/scripts/graph_promotion_sweep_cron.sh
 ```
 
 Rollback:
