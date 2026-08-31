@@ -20,6 +20,7 @@ from .source_integrity import validate_book_source, write_source_integrity_repor
 from .neo4j import Neo4jClient
 from .schema import initialize_schema
 from .multimodal import extract_pdf_visual_evidence, visual_evidence_plan
+from .quarantine import quarantine_book_source
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -80,6 +81,12 @@ def main(argv: list[str] | None = None) -> int:
     promote.add_argument("--chunk-bodies", type=Path)
     promote.add_argument("--write-mode", choices=("dry_run", "upsert"), default="dry_run")
 
+    quarantine = sub.add_parser("quarantine-book", help="Reversibly retire a queued book that fails source integrity.")
+    quarantine.add_argument("--source-id", required=True)
+    quarantine.add_argument("--memory-config", required=True, type=Path)
+    quarantine.add_argument("--data-dir", type=Path)
+    quarantine.add_argument("--write-mode", choices=("dry_run", "upsert"), default="dry_run")
+
     promote_all = sub.add_parser("promote-queued", help="Autonomously sweep all queued books and promote machine-ready sources.")
 
     prepare = sub.add_parser("prepare-book-artifacts", help="Plan or prepare deterministic retrieval/span artifacts for a reviewed book.")
@@ -137,6 +144,16 @@ def main(argv: list[str] | None = None) -> int:
                 args.report_out.parent.mkdir(parents=True, exist_ok=True)
                 args.report_out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             _print({key: value for key, value in result.items() if key != "plan"})
+            return 0
+        if args.command == "quarantine-book":
+            app = MemoryApp.from_config(config_path=args.memory_config, data_dir=args.data_dir)
+            app.init_storage()
+            integrity = validate_book_source(config, args.source_id)
+            if integrity["safe_for_qdrant_crosswalk"]:
+                raise ValueError("quarantine-book requires a source-integrity failure")
+            reason = "source_integrity:" + ",".join(integrity["problems"])
+            client = Neo4jClient.from_config(config) if args.write_mode == "upsert" else None
+            _print(quarantine_book_source(app, client, args.source_id, reason=reason, write_mode=args.write_mode))
             return 0
         if args.command == "promote-queued":
             app = MemoryApp.from_config(config_path=args.memory_config, data_dir=args.data_dir)

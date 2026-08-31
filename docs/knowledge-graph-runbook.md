@@ -86,6 +86,15 @@ A source in `05_QUEUE/book-ingestion/incoming`, `processing`, or `completed` is 
 
 A source must return `ready_for_span_review` from `validate-book-source` before crosswalk or Neo4j upsert. `book-finite-infinite-games-undated` is currently blocked by missing raw-source section markers; its dry-run is diagnostic only. Keep the original extract unchanged, register a complete corrected derivative, then regenerate reviewed chunks and rerun the preflight.
 
+If an already-promoted source later fails source integrity, quarantine it before repair. Quarantine is reversible: it retains the Qdrant points, SQLite chunks, Neo4j records, and raw artifact for audit, but excludes the source from Memory OS retrieval and graph expansion.
+
+```bash
+hermes-graph --config config/hermes-graph.local.yml quarantine-book   --source-id <source-id>   --memory-config config/hermes-memory-os.docker.semantic.yml   --write-mode dry_run
+# Repeat with --write-mode upsert only after the dry-run identifies the intended active crosswalk source.
+```
+
+Autonomous queued promotion applies the same quarantine when a previously active source fails its integrity gate, before it can regenerate derived artifacts.
+
 Use `promote-queued-book` for an end-to-end promotion. It is idempotent and runs both dry validations before it creates Qdrant points or Neo4j records. The queue is authorization; a failed machine gate defers the source and writes a report. Only the checked-in crosswalk adapter may write graph crosswalk points or indexing state; embedding text must exactly equal its declared source span.
 
 ## Concept-overlap review

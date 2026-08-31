@@ -35,17 +35,19 @@ def validate_book_artifacts(book: Any) -> dict[str, Any]:
     missing = sorted(expected - set(observed))
     span_coverage_complete = _exact_span_coverage(book, len(text))
     section_markers_unreliable = _section_markers_unreliable(book)
+    manifest_status = _manifest_status(book)
     first_expected = min(expected) if expected else None
     first_observed = observed[0] if observed else None
     problems = []
     warnings = []
     if actual_hash != book.checksum:
         problems.append("raw_source_hash_mismatch")
+    if manifest_status in {"deferred", "blocked", "incomplete"}:
+        problems.append("manifest_source_not_ready")
     if missing:
-        if span_coverage_complete and section_markers_unreliable:
-            warnings.append("section_markers_unverified_but_exact_spans_cover_source")
-        else:
-            problems.append("section_markers_incomplete")
+        problems.append("section_markers_incomplete")
+        if section_markers_unreliable:
+            warnings.append("section_marker_reliability_does_not_override_completeness")
     if (
         first_expected is not None
         and first_observed is not None
@@ -70,6 +72,7 @@ def validate_book_artifacts(book: Any) -> dict[str, Any]:
         "missing_sections": missing,
         "span_coverage_complete": span_coverage_complete,
         "section_markers_unreliable": section_markers_unreliable,
+        "manifest_status": manifest_status,
         "problems": problems,
         "warnings": warnings,
         "generated_at": now_iso(),
@@ -143,8 +146,20 @@ def _exact_span_coverage(book: Any, text_length: int) -> bool:
     return cursor == text_length
 
 
+def _manifest_status(book: Any) -> str:
+    manifest_text = book.manifest_path.read_text(encoding="utf-8")
+    if not manifest_text.startswith("---\n"):
+        return ""
+    head, separator, _body = manifest_text[4:].partition("\n---\n")
+    if not separator:
+        return ""
+    match = re.search(r"(?im)^\s*status\s*:\s*([^#\n]+)\s*$", head)
+    return match.group(1).strip().lower() if match else ""
+
+
+
 def _section_markers_unreliable(book: Any) -> bool:
-    """Require an explicit immutable-manifest declaration before using span fallback."""
+    """Return diagnostic marker metadata; it never authorizes incomplete sources."""
     manifest_text = book.manifest_path.read_text(encoding="utf-8")
     return bool(
         re.search(

@@ -18,6 +18,7 @@ from .overlap import collect_overlap_review, concept_candidates, write_overlap_r
 from .source_integrity import validate_book_artifacts
 from .artifact_prep import embedding_input_limit, prepare_book_artifacts
 from .multimodal import discover_book_pdf, extract_pdf_visual_evidence, visual_evidence_plan, visual_processing_enabled
+from .quarantine import quarantine_book_source
 
 
 class AutoPromotionError(ValueError):
@@ -69,6 +70,21 @@ def promote_queued_book(
     if write_mode == "upsert" and getattr(memory_app, "semantic_indexer", None) is None:
         raise AutoPromotionError("Memory OS semantic indexing must be enabled before autonomous promotion")
 
+    # Validate the immutable source before generating any derived artifacts.
+    book = discover_book(config.vault_root, source_id)
+    integrity = validate_book_artifacts(book)
+    if not integrity["safe_for_qdrant_crosswalk"]:
+        reason = "source_integrity:" + ",".join(integrity["problems"])
+        quarantine = quarantine_book_source(
+            memory_app,
+            client,
+            source_id,
+            reason=reason,
+            write_mode=write_mode,
+        )
+        _write_deferred_report(config, source_id, integrity, quarantine)
+        raise AutoPromotionError("source-integrity validation blocked promotion: " + ", ".join(integrity["problems"]))
+
     limit = embedding_input_limit(memory_app)
     prepared = prepare_book_artifacts(
         config,
@@ -80,11 +96,6 @@ def promote_queued_book(
     bodies_path = (chunk_bodies_path or default_chunk_bodies_path(config, source_id)).resolve()
     if write_mode == "upsert":
         bodies_path = Path(prepared["chunk_bodies_path"]).resolve()
-
-    book = discover_book(config.vault_root, source_id)
-    integrity = validate_book_artifacts(book)
-    if not integrity["safe_for_qdrant_crosswalk"]:
-        raise AutoPromotionError("source-integrity validation blocked promotion: " + ", ".join(integrity["problems"]))
     if not bodies_path.is_file():
         raise AutoPromotionError(f"missing exact chunk-body manifest: {bodies_path}")
 
@@ -262,3 +273,23 @@ def _promote_visual_evidence(
         result["superseded_variants"] = client.supersede_visual_variants(plan["visual_records"])
         result["status"] = "upserted"
     return result
+
+
+def _write_deferred_report(
+    config: GraphConfig,
+    source_id: str,
+    integrity: dict[str, Any],
+    quarantine: dict[str, Any],
+) -> Path:
+    output = config.reports_root / "promotions" / f"{source_id}.deferred.json"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "source_id": source_id,
+        "status": "deferred",
+        "reason": "source_integrity_blocked",
+        "source_integrity": integrity,
+        "quarantine": quarantine,
+        "generated_at": now_iso(),
+    }
+    output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return output

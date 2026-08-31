@@ -122,6 +122,21 @@ class Neo4jClient:
                 superseded_claims += int(rows[0]["claims"])
         return {"evidence": superseded_evidence, "claims": superseded_claims}
 
+    def quarantine_source(self, source_id: str, *, reason: str) -> bool:
+        """Retire a graph source from expansion while preserving its audit records."""
+
+        rows = self.execute(
+            """
+            MATCH (source:Source {id: $source_id})
+            SET source.graph_status = "quarantined",
+                source.graph_status_reason = $reason,
+                source.graph_status_updated_at = $updated_at
+            RETURN count(source) AS quarantined
+            """,
+            {"source_id": source_id, "reason": reason, "updated_at": now_iso()},
+        )
+        return bool(rows and int(rows[0].get("quarantined") or 0))
+
     def expand_context(self, chunk_ids: list[str], qdrant_point_ids: list[str]) -> list[dict[str, Any]]:
         if not chunk_ids and not qdrant_point_ids:
             return []

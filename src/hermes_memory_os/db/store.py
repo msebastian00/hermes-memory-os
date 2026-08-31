@@ -410,6 +410,25 @@ class MemoryStore:
             ).rowcount
         return bool(changed)
 
+    def quarantine_source(self, source_id: str, *, reason: str) -> bool:
+        """Retire an active source from retrieval without deleting its audit trail."""
+
+        if not source_id or not reason:
+            return False
+        with self.connection() as conn:
+            row = conn.execute("SELECT metadata_json, status FROM sources WHERE id=?", (source_id,)).fetchone()
+            if row is None or row["status"] != "active":
+                return False
+            metadata = loads(row["metadata_json"], {}) or {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata.update({"quarantine_reason": reason, "quarantined_at": now_iso()})
+            changed = conn.execute(
+                "UPDATE sources SET status='quarantined', metadata_json=? WHERE id=? AND status='active'",
+                (dumps(metadata), source_id),
+            ).rowcount
+        return bool(changed)
+
     def list_chunks_needing_index(
         self,
         *,
