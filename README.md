@@ -17,6 +17,10 @@ This repository contains the local memory substrate and current semantic retriev
 - optional HTTP adapter for direct Reachy/agent recall over `/health`, `/v1/search`, `/v1/sources/chunks`, and `/v1/candidates`
 - reviewed extraction candidates and self-learning event logging
 
+## Deployment And Recovery
+
+For a complete, secrets-free installation, configuration, Core-Agent job setup, data rebuild, and backup procedure, read [Reproducible Deployment](docs/reproducibility.md). It intentionally excludes books, vault content other than the operational policy snapshot, credentials, and runtime database data.
+
 ## Quick Start
 
 ```bash

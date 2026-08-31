@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "purpose": "Non-secret recovery snapshot of operational vault policies. The live vault remains authoritative.",
+  "files": [
+    {"path": "04_SYSTEM/policies/BOOKMARK_INGESTION_POLICY.md", "sha256": "e133ba80322243d28a082244a3d2750bd0790d265955b6440d82a53065302175"},
+    {"path": "04_SYSTEM/policies/HERMES_KNOWLEDGE_GRAPH_POLICY.md", "sha256": "3b38177fd23ef79dd62b171ba033750a355f70e65d3f03165bd115ee01a75d7c"},
+    {"path": "04_SYSTEM/policies/HERMES_SOURCE_INTEGRITY_POLICY.md", "sha256": "3adfd4e2bf8a65b58515a2b1a139d7a1f0ba510624d041030f98a76169a1828c"},
+    {"path": "04_SYSTEM/policies/POLICY_ROUTER.md", "sha256": "235c9dc9d770dcaaacb18738984ac062c3505b2451c92ba3c78dcc141a4f6143"},
+    {"path": "04_SYSTEM/policies/README.md", "sha256": "95512f7b1439fa1df3aa5c915ca764e7b7c9c3989e9b408ee5d0c38b53a75a91"},
+    {"path": "04_SYSTEM/policies/book-and-longform-knowledge-ingestion-policy.md", "sha256": "9c664ef56305451fe0787d0b593787ddde007f5d8cfe607df3ae0f1e5b19bb37"},
+    {"path": "04_SYSTEM/policies/entity-resolution-policy.md", "sha256": "8f4b6fe8634c55665715c4fa8997fd7c6993f5ee1444256539246fa64b53734a"}
+  ],
+  "excluded": ["all books and source material", "all vault notes, queues, generated reports, and archives", "all credentials and local environment files", "all Neo4j, Qdrant, and SQLite runtime data"]
+}

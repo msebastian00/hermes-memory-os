@@ -2,6 +2,8 @@
 
 Optional Neo4j relationship layer on top of Memory OS. Vault remains canonical. Qdrant remains the vector layer. Memory OS remains the durable memory owner. Honcho is out of scope.
 
+For a from-scratch, secrets-free deployment and recovery procedure, including the empty vault bootstrap, policy snapshot, Core-Agent job installation, and external database backup requirements, see [Reproducible Deployment](reproducibility.md).
+
 ## Enablement
 
 Graph expansion is off by default.
